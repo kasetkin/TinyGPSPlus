@@ -243,6 +243,7 @@ public:
   TinyGPSAltitude altitude;
   TinyGPSInteger satellites;
   TinyGPSHDOP hdop;
+  TinyGPSAltitude geoidHeight;
 
   static const char *libraryVersion() { return _GPS_VERSION; }
 
@@ -258,6 +259,8 @@ public:
   uint32_t failedChecksum()   const { return failedChecksumCount; }
   uint32_t passedChecksum()   const { return passedChecksumCount; }
 
+  uint8_t  sentenceType()      const { return curSentenceType; }
+
 private:
   enum {GPS_SENTENCE_GGA, GPS_SENTENCE_RMC, GPS_SENTENCE_OTHER};
 
@@ -269,6 +272,10 @@ private:
   uint8_t curTermNumber;
   uint8_t curTermOffset;
   bool sentenceHasFix;
+
+  /// my code
+  uint8_t sentenceChecksumCharsSize;
+  uint32_t parity32bit;
 
   // custom element support
   friend class TinyGPSCustom;
@@ -285,6 +292,9 @@ private:
   // internal utilities
   int fromHex(char a);
   bool endOfTermHandler();
+
+  /// replace Arduino.h
+  //! \todo check if realization is correct
   static double radians(double degrees);
   static double degrees(double radians);
   static double sq(double x);

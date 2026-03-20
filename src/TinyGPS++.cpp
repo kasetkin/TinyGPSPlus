@@ -23,12 +23,14 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "TinyGPS++.h"
 
-#include <string.h>
 #include <ctype.h>
+#include <cstring>
 #include <cstddef>
 #include <cstdlib>
 #include <cmath>
 #include <chrono>
+
+#include "unicore.h"
 
 #define _RMCterm "RMC"
 #define _GGAterm "GGA"
@@ -53,6 +55,8 @@ TinyGPSPlus::TinyGPSPlus()
   ,  curTermNumber(0)
   ,  curTermOffset(0)
   ,  sentenceHasFix(false)
+  ,  sentenceChecksumCharsSize(0)
+  ,  parity32bit(0)
   ,  customElts(0)
   ,  customCandidates(0)
   ,  encodedCharCount(0)
@@ -75,6 +79,8 @@ bool TinyGPSPlus::encode(char c)
   {
   case ',': // term terminators
     parity ^= (uint8_t)c;
+    pushByte32BitCrc(c, parity32bit);
+    // [[fallthrough]];
   case '\r':
   case '\n':
   case '*':
@@ -92,7 +98,11 @@ bool TinyGPSPlus::encode(char c)
     }
     break;
 
+  case '#': // sentence begin in Unicore protocol
+    parity32bit = 0;
+    // [[fallthrough]];
   case '$': // sentence begin
+    sentenceChecksumCharsSize = c == '#' ? 8 : 2;
     curTermNumber = curTermOffset = 0;
     parity = 0;
     curSentenceType = GPS_SENTENCE_OTHER;
@@ -105,6 +115,8 @@ bool TinyGPSPlus::encode(char c)
       term[curTermOffset++] = c;
     if (!isChecksumTerm)
       parity ^= c;
+    if ((!isChecksumTerm) && (sentenceChecksumCharsSize == 8))
+      pushByte32BitCrc(c, parity32bit);
     return false;
   }
 
@@ -175,8 +187,21 @@ bool TinyGPSPlus::endOfTermHandler()
   // If it's the checksum term, and the checksum checks out, commit
   if (isChecksumTerm)
   {
-    std::uint8_t checksum = static_cast<std::uint8_t>(16) * static_cast<std::uint8_t>(fromHex(term[0]) + fromHex(term[1]));
-    if (checksum == parity)
+    bool correctChecksum = false;
+    if (sentenceChecksumCharsSize == 8) {
+      uint32_t checksum = 0;
+      for (size_t i = 0; i < sentenceChecksumCharsSize; ++i)
+        checksum = static_cast<std::uint32_t>(16) * checksum + fromHex(term[i]);
+
+      // Serial.printf("32 bits checksum from data: %d, checksum from last 8 bytes: %d\n", parity32bit, checksum);
+      correctChecksum = checksum == parity32bit;
+    } else {
+      uint8_t checksum = 16 * fromHex(term[0]) + fromHex(term[1]);
+      // Serial.printf("8 bits checksum from data: %d, checksum from last 2 bytes: %d\n", parity, checksum);
+      correctChecksum = checksum == parity;
+    }
+
+    if (correctChecksum)
     {
       passedChecksumCount++;
       if (sentenceHasFix)
@@ -200,6 +225,7 @@ bool TinyGPSPlus::endOfTermHandler()
         {
           location.commit();
           altitude.commit();
+          geoidHeight.commit();
         }
         satellites.commit();
         hdop.commit();
@@ -289,6 +315,9 @@ bool TinyGPSPlus::endOfTermHandler()
     case COMBINE(GPS_SENTENCE_RMC, 12):
       location.newFixMode = (TinyGPSLocation::Mode)term[0];
       break;
+    case COMBINE(GPS_SENTENCE_GGA, 11): // Height over Geoid
+      geoidHeight.set(term);
+      break;
   }
 
   // Set custom values as needed
@@ -302,17 +331,17 @@ bool TinyGPSPlus::endOfTermHandler()
 /* static */
 double TinyGPSPlus::radians(double degrees)
 {
-  constexpr double scale = M_PI / 180.0;
+  constexpr double scale = M_PI / 180.0f;
   return degrees * scale;
 }
 
-static double degrees(double radians)
+double TinyGPSPlus::degrees(double radians)
 {
-  constexpr double scale = 180.0 / M_PI;
+  constexpr double scale = 180.0f / M_PI;
   return radians * scale;
 }
 
-static double sq(double x)
+double TinyGPSPlus::sq(double x)
 {
   return x * x;
 }
@@ -358,7 +387,7 @@ double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long
   a2 = atan2(a1, a2);
   if (a2 < 0.0)
   {
-    a2 += 2.0 * M_PI;
+    a2 += 2.0f * M_PI;
   }
   return degrees(a2);
 }
