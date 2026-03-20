@@ -25,7 +25,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <string.h>
 #include <ctype.h>
-#include <stdlib.h>
+#include <cstddef>
+#include <cstdlib>
+#include <cmath>
+#include <chrono>
 
 #define _RMCterm "RMC"
 #define _GGAterm "GGA"
@@ -172,7 +175,7 @@ bool TinyGPSPlus::endOfTermHandler()
   // If it's the checksum term, and the checksum checks out, commit
   if (isChecksumTerm)
   {
-    byte checksum = 16 * fromHex(term[0]) + fromHex(term[1]);
+    std::uint8_t checksum = static_cast<std::uint8_t>(16) * static_cast<std::uint8_t>(fromHex(term[0]) + fromHex(term[1]));
     if (checksum == parity)
     {
       passedChecksumCount++;
@@ -297,6 +300,24 @@ bool TinyGPSPlus::endOfTermHandler()
 }
 
 /* static */
+double TinyGPSPlus::radians(double degrees)
+{
+  constexpr double scale = M_PI / 180.0;
+  return degrees * scale;
+}
+
+static double degrees(double radians)
+{
+  constexpr double scale = 180.0 / M_PI;
+  return radians * scale;
+}
+
+static double sq(double x)
+{
+  return x * x;
+}
+
+/* static */
 double TinyGPSPlus::distanceBetween(double lat1, double long1, double lat2, double long2)
 {
   // returns distance in meters between two positions, both specified
@@ -337,7 +358,7 @@ double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long
   a2 = atan2(a1, a2);
   if (a2 < 0.0)
   {
-    a2 += TWO_PI;
+    a2 += 2.0 * M_PI;
   }
   return degrees(a2);
 }

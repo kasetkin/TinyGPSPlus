@@ -27,7 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define __TinyGPSPlus_h
 
 #include <inttypes.h>
-#include "Arduino.h"
+// #include "Arduino.h"
 #include <limits.h>
 
 #define _GPS_VERSION "1.1.0" // software version of this library
@@ -49,6 +49,11 @@ public:
    RawDegrees() : deg(0), billionths(0), negative(false)
    {}
 };
+
+#if !defined(ARDUINO) && !defined(__AVR__)
+// Alternate implementation of millis() that relies on std
+unsigned long millis();
+#endif
 
 struct TinyGPSLocation
 {
@@ -280,6 +285,9 @@ private:
   // internal utilities
   int fromHex(char a);
   bool endOfTermHandler();
+  static double radians(double degrees);
+  static double degrees(double radians);
+  static double sq(double x);
 };
 
 #endif // def(__TinyGPSPlus_h)
