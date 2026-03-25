@@ -5,7 +5,7 @@
 #include <algorithm>
 // #include "configuration.h"
 
-PppInfo localPPP = PppInfo();
+// PppInfo localPPP = PppInfo();
 
 int32_t parseDegreesLatLon(const char *str)
 {

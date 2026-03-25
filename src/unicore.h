@@ -1,3 +1,4 @@
+#pragma once
 #include <cstdint>
 #include <string>
 
@@ -70,7 +71,7 @@ struct PppInfo {
     int32_t stationId = -1;
 };
 
-extern PppInfo localPPP;
+// extern PppInfo localPPP;
 
 /// return in Meshtastic format, multiply by 1e-7 to get degrees
 int32_t parseDegreesLatLon(const char *str);
