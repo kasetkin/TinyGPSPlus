@@ -3,9 +3,6 @@
 #include <cmath>
 #include <string>
 #include <algorithm>
-// #include "configuration.h"
-
-// PppInfo localPPP = PppInfo();
 
 int32_t parseDegreesLatLon(const char *str)
 {
@@ -15,7 +12,7 @@ int32_t parseDegreesLatLon(const char *str)
     if (!isdigit(*str))
         return PPP_BAD_LATLON;
 
-    const int32_t roundDigits = static_cast<int32_t>(atol(str));
+    const int32_t roundDigits = static_cast<int32_t>(std::atol(str));
     // LOG_DEBUG("left part of str is %d", roundDigits);
     if ((roundDigits < -181) || (roundDigits > 181))
         return PPP_BAD_LATLON;
@@ -54,30 +51,42 @@ int32_t parseDegreesLatLon(const char *str)
 std::string prepareString(const char *str)
 {
     std::string cppStr(str);
-    /// first check and skip "17;" part of "17;SOL_COMPUTED" string
-    const auto findResultIter = cppStr.find(';');
-    if (findResultIter != std::string::npos)
-        cppStr = cppStr.substr(findResultIter + 1);
-
     std::transform(cppStr.begin(), cppStr.end(), cppStr.begin(),
-                   [](unsigned char c){ return std::toupper(c); } // correct
+                   [](unsigned char c){ return std::toupper(c); } 
     );
 
-    // LOG_DEBUG("original string: %s", str);
-    // LOG_DEBUG("prepared string: %s", cppStr.c_str());
     return cppStr;
 }
 
-PppSolutionStatus parseSolutionStatus(const char *str)
+std::pair<std::string, std::string> splitAndPrepareString(const char *str)
 {
     const std::string cppStr = prepareString(str);
-    if (cppStr == "SOL_COMPUTED")
+    /// first check and skip "17;" part of "17;SOL_COMPUTED" string
+    const auto delimiterPos = cppStr.find(';');
+    if (delimiterPos != std::string::npos) {
+        auto first = cppStr.substr(0, delimiterPos);
+        auto second = cppStr.substr(delimiterPos + 1);
+        return {first, second};
+    }
+
+    return {"", cppStr};
+}
+
+PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs)
+{
+    const auto preparedPair = splitAndPrepareString(str);
+    const auto &leapSecsStr = preparedPair.first;
+    const auto &solStatusStr = preparedPair.second;
+
+    outputDelayMs = static_cast<uint16_t>(std::atol(leapSecsStr.c_str()));
+
+    if (solStatusStr == "SOL_COMPUTED")
         return PppSolutionStatus::SOL_COMPUTED;
-    else if (cppStr == "INSUFFICIENT_OBS")
+    else if (solStatusStr == "INSUFFICIENT_OBS")
         return PppSolutionStatus::INSUFFICIENT_OBS;
-    else if (cppStr == "NO_CONVERGENCE")
+    else if (solStatusStr == "NO_CONVERGENCE")
         return PppSolutionStatus::NO_CONVERGENCE;
-    else if (cppStr == "COV_TRACE")
+    else if (solStatusStr == "COV_TRACE")
         return PppSolutionStatus::COV_TRACE;
     else
         return PppSolutionStatus::NO_VALUE;

@@ -62,6 +62,7 @@ struct PppInfo {
     float lonStdDev = -1.0;
     float altStdDev = -1.0;
     int32_t solutionAge = -1.0;
+    uint16_t outputDelayMs = 0;
 
     PppSolutionStatus solutionStatus = PppSolutionStatus::NO_VALUE;
     PositionVelocityType positionType = PositionVelocityType::NO_VALUE;
@@ -75,7 +76,7 @@ struct PppInfo {
 
 /// return in Meshtastic format, multiply by 1e-7 to get degrees
 int32_t parseDegreesLatLon(const char *str);
-PppSolutionStatus parseSolutionStatus(const char *str);
+PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs);
 PositionVelocityType parsePositionType(const char *str);
 PppDatumId parseDatumId(const char *str);
 int32_t parseStationId(const char *str);
