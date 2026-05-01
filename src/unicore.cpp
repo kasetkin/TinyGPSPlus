@@ -194,14 +194,14 @@ PppService parsePppService(const int32_t stationId)
     return PppService::NO_VALUE;
 }
 
-std::uint32_t calculateCRC32(std::uint8_t *szBuf, int iSize)
-{
-    std::uint32_t ulCRC = 0;
-    for (int iIndex = 0; iIndex < iSize; iIndex++)
-        ulCRC = aulCrcTable[(ulCRC ^ szBuf[iIndex]) & 0xff] ^ (ulCRC >> 8);
+// std::uint32_t calculateCRC32(std::uint8_t *szBuf, int iSize)
+// {
+//     std::uint32_t ulCRC = 0;
+//     for (int iIndex = 0; iIndex < iSize; iIndex++)
+//         ulCRC = aulCrcTable[(ulCRC ^ szBuf[iIndex]) & 0xff] ^ (ulCRC >> 8);
 
-    return ulCRC;
-}
+//     return ulCRC;
+// }
 
 void pushByte32BitCrc(std::uint8_t newChar, std::uint32_t &checksum)
 {

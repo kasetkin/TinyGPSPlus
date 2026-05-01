@@ -131,7 +131,7 @@ const std::uint32_t aulCrcTable[256] =
 
 // Calculate and return the CRC for binary buffer
 // from UM980 reference manual "Unicore Reference Commands Manual For N4 High Precision Products_V2_EN_R1.6.pdf"
-std::uint32_t calculateCRC32(std::uint8_t *szBuf, int iSize);
+// std::uint32_t calculateCRC32(std::uint8_t *szBuf, int iSize);
 void pushByte32BitCrc(std::uint8_t newChar, std::uint32_t &checksum);
 
 /// @return UTC seconds
