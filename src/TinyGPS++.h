@@ -249,6 +249,8 @@ public:
 
   static double distanceBetween(double lat1, double long1, double lat2, double long2);
   static double courseTo(double lat1, double long1, double lat2, double long2);
+  static double radians(double degrees);
+  static double degrees(double radians);
   static const char *cardinal(double course);
 
   static int32_t parseDecimal(const char *term);
@@ -293,10 +295,6 @@ private:
   int fromHex(char a);
   bool endOfTermHandler();
 
-  /// replace Arduino.h
-  //! \todo check if realization is correct
-  static double radians(double degrees);
-  static double degrees(double radians);
   static double sq(double x);
 };
 
