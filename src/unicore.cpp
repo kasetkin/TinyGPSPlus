@@ -8,13 +8,17 @@ int32_t parseDegreesLatLon(const char *str)
 {
     // LOG_DEBUG("parse decimal degree from sring [%s]", str);
 
+    const bool isNegative = (*str == '-');
+    if (isNegative)
+    	++str;
+
     // An invalid character
     if (!isdigit(*str))
         return PPP_BAD_LATLON;
 
     const int32_t roundDigits = static_cast<int32_t>(std::atol(str));
     // LOG_DEBUG("left part of str is %d", roundDigits);
-    if ((roundDigits < -181) || (roundDigits > 181))
+    if (roundDigits > 181)
         return PPP_BAD_LATLON;
 
     while (isdigit(*str))
@@ -45,7 +49,7 @@ int32_t parseDegreesLatLon(const char *str)
 
     const int32_t result = roundDigits * meshtasticLatLonMultiplier + accumulator;
     // LOG_DEBUG("result is [%d]", result);
-    return result;
+    return isNegative ? -result : result;
 }
 
 std::string prepareString(const char *str)
