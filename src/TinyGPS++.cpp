@@ -80,7 +80,7 @@ bool TinyGPSPlus::encode(char c)
   case ',': // term terminators
     parity ^= (uint8_t)c;
     pushByte32BitCrc(c, parity32bit);
-    // [[fallthrough]];
+    [[fallthrough]];
   case '\r':
   case '\n':
   case '*':
@@ -100,7 +100,7 @@ bool TinyGPSPlus::encode(char c)
 
   case '#': // sentence begin in Unicore protocol
     parity32bit = 0;
-    // [[fallthrough]];
+    [[fallthrough]];
   case '$': // sentence begin
     sentenceChecksumCharsSize = c == '#' ? 8 : 2;
     curTermNumber = curTermOffset = 0;
