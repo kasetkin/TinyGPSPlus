@@ -66,8 +66,7 @@ std::pair<std::string, std::string> splitAndPrepareString(const char *str)
 {
     const std::string cppStr = prepareString(str);
     /// first check and skip "17;" part of "17;SOL_COMPUTED" string
-    const auto delimiterPos = cppStr.find(';');
-    if (delimiterPos != std::string::npos) {
+    if (const auto delimiterPos = cppStr.find(';'); delimiterPos != std::string::npos) {
         auto first = cppStr.substr(0, delimiterPos);
         auto second = cppStr.substr(delimiterPos + 1);
         return {first, second};
