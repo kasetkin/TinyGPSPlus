@@ -78,9 +78,7 @@ std::pair<std::string, std::string> splitAndPrepareString(const char *str)
 
 PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs)
 {
-    const auto preparedPair = splitAndPrepareString(str);
-    const auto &leapSecsStr = preparedPair.first;
-    const auto &solStatusStr = preparedPair.second;
+    const auto [leapSecsStr, solStatusStr] = splitAndPrepareString(str);
 
     outputDelayMs = static_cast<uint16_t>(std::atol(leapSecsStr.c_str()));
 
