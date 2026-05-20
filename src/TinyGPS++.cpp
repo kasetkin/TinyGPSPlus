@@ -111,7 +111,7 @@ bool TinyGPSPlus::encode(char c)
     sentenceHasFix = false;
     return false;
 
-  default: // ordinary characters
+  [[likely]] default: // ordinary characters
     if (curTermOffset < sizeof(term) - 1)
       term[curTermOffset++] = c;
     if (!isChecksumTerm)
