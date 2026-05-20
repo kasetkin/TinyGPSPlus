@@ -3,6 +3,7 @@
 #include <cmath>
 #include <string>
 #include <algorithm>
+#include <ranges>
 
 int32_t parseDegreesLatLon(const char *str)
 {
@@ -54,12 +55,11 @@ int32_t parseDegreesLatLon(const char *str)
 
 std::string prepareString(const char *str)
 {
-    std::string cppStr(str);
-    std::transform(cppStr.begin(), cppStr.end(), cppStr.begin(),
-                   [](unsigned char c){ return std::toupper(c); } 
-    );
-
-    return cppStr;
+    return std::string_view(str)
+        | std::views::transform([](unsigned char c) static {
+            return static_cast<char>(std::toupper(c));
+        })
+        | std::ranges::to<std::string>();
 }
 
 std::pair<std::string, std::string> splitAndPrepareString(const char *str)
