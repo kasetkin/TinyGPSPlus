@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <cstdlib>
 #include <cmath>
 #include <chrono>
+#include <iterator>
 
 #include "unicore.h"
 
@@ -396,7 +397,7 @@ const char *TinyGPSPlus::cardinal(double course)
 {
   static const char* directions[] = {"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"};
   int direction = (int)((course + 11.25f) / 22.5f);
-  return directions[direction % 16];
+  return directions[direction % std::size(directions)];
 }
 
 void TinyGPSLocation::commit()
