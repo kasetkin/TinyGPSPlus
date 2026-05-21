@@ -32,7 +32,7 @@ int32_t parseDegreesLatLon(const char *str)
     /// skip '.'
     ++str;
 
-    const int32_t meshtasticLatLonMultiplier = 1000 * 1000 * 10;
+    constexpr int32_t meshtasticLatLonMultiplier = 1000 * 1000 * 10;
     int32_t currectDigitMultiplier = meshtasticLatLonMultiplier / 10;
     int32_t accumulator = 0;
     do
@@ -170,6 +170,7 @@ int32_t parseStationId(const char *str)
     return result;
 }
 
+// constexpr flat_map not possible (heap escapes constant eval); switch on 7 ints is equally fast
 PppService parsePppService(const int32_t stationId)
 {
     switch (stationId)
@@ -231,114 +232,4 @@ uint32_t computeUtxTime(const int32_t week, const int32_t milliSecsOfWeek, const
     return result;
 }
 
-std::string solutionStatusStr(const PppSolutionStatus &pppStatus)
-{
-    switch (pppStatus)
-    {
-    case PppSolutionStatus::SOL_COMPUTED:
-        return "SOL_COMPUTED";
-    case PppSolutionStatus::INSUFFICIENT_OBS:
-        return "INSUFFICIENT_OBS";
-    case PppSolutionStatus::NO_CONVERGENCE:
-        return "NO_CONVERGENCE";
-    case PppSolutionStatus::COV_TRACE:
-        return "COV_TRACE";
-    case PppSolutionStatus::NO_VALUE:
-        return "NO_VALUE";
-    default:
-        return "ERROR";
-    }
-
-    return "ERROR";
-}
-
-std::string positionTypeStr(const PositionVelocityType &posType)
-{
-    switch (posType)
-    {
-    case PositionVelocityType::NONE:
-        return "NONE";
-    case PositionVelocityType::FIXEDPOS:
-        return "FIXEDPOS";
-    case PositionVelocityType::FIXEDHEIGHT:
-        return "FIXEDHEIGHT";
-    case PositionVelocityType::DOPPLER_VELOCITY:
-        return "DOPPLER_VELOCITY";
-    case PositionVelocityType::SINGLE:
-        return "SINGLE";
-    case PositionVelocityType::PSRDIFF:
-        return "PSRDIFF";
-    case PositionVelocityType::SBAS:
-        return "SBAS";
-    case PositionVelocityType::L1_FLOAT:
-        return "L1_FLOAT";
-    case PositionVelocityType::IONOFREE_FLOAT:
-        return "IONOFREE_FLOAT";
-    case PositionVelocityType::NARROW_FLOAT:
-        return "NARROW_FLOAT";
-    case PositionVelocityType::L1_INT:
-        return "L1_INT";
-    case PositionVelocityType::WIDE_INT:
-        return "WIDE_INT";
-    case PositionVelocityType::NARROW_INT:
-        return "NARROW_INT";
-    case PositionVelocityType::INS:
-        return "INS";
-    case PositionVelocityType::INS_PSRSP:
-        return "INS_PSRSP";
-    case PositionVelocityType::INS_PSRDIFF:
-        return "INS_PSRDIFF";
-    case PositionVelocityType::INS_RTKFLOAT:
-        return "INS_RTKFLOAT";
-    case PositionVelocityType::INS_RTKFIXED:
-        return "INS_RTKFIXED";
-    case PositionVelocityType::PPP_CONVERGING:
-        return "PPP_CONVERGING";
-    case PositionVelocityType::PPP:
-        return "PPP";
-    case PositionVelocityType::NO_VALUE:
-        return "NO_VALUE";
-    default:
-        return "ERROR";
-    }
-
-    return "ERROR";
-}
-
-std::string serviceIdStr(const PppService &service)
-{
-    switch (service)
-    {
-    case PppService::GALILEO:
-        return "GALILEO";
-    case PppService::BEIDOU:
-        return "BEIDOU";
-    case PppService::QZSS:
-        return "QZSS";
-    case PppService::RXN:
-        return "RXN";
-    case PppService::NO_VALUE:
-        return "NO_VALUE";
-    default:
-        return "ERROR";
-    }
-
-    return "ERROR";
-}
-
-std::string datumIdStr(const PppDatumId &datum)
-{
-    switch (datum)
-    {
-    case PppDatumId::WGS84:
-        return "WGS84";
-    case PppDatumId::B2b:
-        return "B2b";
-    case PppDatumId::NO_VALUE:
-        return "NO_VALUE";
-    default:
-        return "ERROR";
-    }
-
-    return "ERROR";
-}
+// solutionStatusStr, positionTypeStr, serviceIdStr, datumIdStr — moved to unicore.h as inline constexpr
