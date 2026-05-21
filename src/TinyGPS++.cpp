@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <cstddef>
 #include <cstdlib>
 #include <cmath>
+#include <numbers>
 #include <chrono>
 #include <iterator>
 
@@ -332,13 +333,13 @@ bool TinyGPSPlus::endOfTermHandler()
 /* static */
 double TinyGPSPlus::radians(double degrees)
 {
-  constexpr double scale = M_PI / 180.0f;
+  constexpr double scale = std::numbers::pi / 180.0;
   return degrees * scale;
 }
 
 double TinyGPSPlus::degrees(double radians)
 {
-  constexpr double scale = 180.0f / M_PI;
+  constexpr double scale = 180.0 / std::numbers::pi;
   return radians * scale;
 }
 
@@ -388,7 +389,7 @@ double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long
   a2 = atan2(a1, a2);
   if (a2 < 0.0)
   {
-    a2 += 2.0f * M_PI;
+    a2 += 2.0 * std::numbers::pi;
   }
   return degrees(a2);
 }
