@@ -142,61 +142,99 @@ uint32_t computeUtxTime(const int32_t week, const int32_t milliSecsOfWeek, const
 constexpr std::string_view solutionStatusStr(PppSolutionStatus pppStatus)
 {
     switch (pppStatus) {
-    case PppSolutionStatus::SOL_COMPUTED:    return "SOL_COMPUTED";
-    case PppSolutionStatus::INSUFFICIENT_OBS: return "INSUFFICIENT_OBS";
-    case PppSolutionStatus::NO_CONVERGENCE:  return "NO_CONVERGENCE";
-    case PppSolutionStatus::COV_TRACE:       return "COV_TRACE";
-    case PppSolutionStatus::NO_VALUE:        return "NO_VALUE";
-    default:                                 return "ERROR";
+    case PppSolutionStatus::SOL_COMPUTED:
+        return "SOL_COMPUTED";
+    case PppSolutionStatus::INSUFFICIENT_OBS:
+        return "INSUFFICIENT_OBS";
+    case PppSolutionStatus::NO_CONVERGENCE:
+        return "NO_CONVERGENCE";
+    case PppSolutionStatus::COV_TRACE:
+        return "COV_TRACE";
+    case PppSolutionStatus::NO_VALUE:
+        return "NO_VALUE";
+    default:
+        return "ERROR";
     }
 }
 
 constexpr std::string_view positionTypeStr(PositionVelocityType posType)
 {
     switch (posType) {
-    case PositionVelocityType::NONE:             return "NONE";
-    case PositionVelocityType::FIXEDPOS:         return "FIXEDPOS";
-    case PositionVelocityType::FIXEDHEIGHT:      return "FIXEDHEIGHT";
-    case PositionVelocityType::DOPPLER_VELOCITY: return "DOPPLER_VELOCITY";
-    case PositionVelocityType::SINGLE:           return "SINGLE";
-    case PositionVelocityType::PSRDIFF:          return "PSRDIFF";
-    case PositionVelocityType::SBAS:             return "SBAS";
-    case PositionVelocityType::L1_FLOAT:         return "L1_FLOAT";
-    case PositionVelocityType::IONOFREE_FLOAT:   return "IONOFREE_FLOAT";
-    case PositionVelocityType::NARROW_FLOAT:     return "NARROW_FLOAT";
-    case PositionVelocityType::L1_INT:           return "L1_INT";
-    case PositionVelocityType::WIDE_INT:         return "WIDE_INT";
-    case PositionVelocityType::NARROW_INT:       return "NARROW_INT";
-    case PositionVelocityType::INS:              return "INS";
-    case PositionVelocityType::INS_PSRSP:        return "INS_PSRSP";
-    case PositionVelocityType::INS_PSRDIFF:      return "INS_PSRDIFF";
-    case PositionVelocityType::INS_RTKFLOAT:     return "INS_RTKFLOAT";
-    case PositionVelocityType::INS_RTKFIXED:     return "INS_RTKFIXED";
-    case PositionVelocityType::PPP_CONVERGING:   return "PPP_CONVERGING";
-    case PositionVelocityType::PPP:              return "PPP";
-    case PositionVelocityType::NO_VALUE:         return "NO_VALUE";
-    default:                                     return "ERROR";
+    case PositionVelocityType::NONE:
+        return "NONE";
+    case PositionVelocityType::FIXEDPOS:
+        return "FIXEDPOS";
+    case PositionVelocityType::FIXEDHEIGHT:
+        return "FIXEDHEIGHT";
+    case PositionVelocityType::DOPPLER_VELOCITY:
+        return "DOPPLER_VELOCITY";
+    case PositionVelocityType::SINGLE:
+        return "SINGLE";
+    case PositionVelocityType::PSRDIFF:
+        return "PSRDIFF";
+    case PositionVelocityType::SBAS:
+        return "SBAS";
+    case PositionVelocityType::L1_FLOAT:
+        return "L1_FLOAT";
+    case PositionVelocityType::IONOFREE_FLOAT:
+        return "IONOFREE_FLOAT";
+    case PositionVelocityType::NARROW_FLOAT:
+        return "NARROW_FLOAT";
+    case PositionVelocityType::L1_INT:
+        return "L1_INT";
+    case PositionVelocityType::WIDE_INT:
+        return "WIDE_INT";
+    case PositionVelocityType::NARROW_INT:
+        return "NARROW_INT";
+    case PositionVelocityType::INS:
+        return "INS";
+    case PositionVelocityType::INS_PSRSP:
+        return "INS_PSRSP";
+    case PositionVelocityType::INS_PSRDIFF:
+        return "INS_PSRDIFF";
+    case PositionVelocityType::INS_RTKFLOAT:
+        return "INS_RTKFLOAT";
+    case PositionVelocityType::INS_RTKFIXED:
+        return "INS_RTKFIXED";
+    case PositionVelocityType::PPP_CONVERGING:
+        return "PPP_CONVERGING";
+    case PositionVelocityType::PPP:
+        return "PPP";
+    case PositionVelocityType::NO_VALUE:
+        return "NO_VALUE";
+    default:
+        return "ERROR";
     }
 }
 
 constexpr std::string_view serviceIdStr(PppService service)
 {
     switch (service) {
-    case PppService::GALILEO:  return "GALILEO";
-    case PppService::BEIDOU:   return "BEIDOU";
-    case PppService::QZSS:     return "QZSS";
-    case PppService::RXN:      return "RXN";
-    case PppService::NO_VALUE: return "NO_VALUE";
-    default:                   return "ERROR";
+    case PppService::GALILEO:
+        return "GALILEO";
+    case PppService::BEIDOU:
+        return "BEIDOU";
+    case PppService::QZSS:
+        return "QZSS";
+    case PppService::RXN:
+        return "RXN";
+    case PppService::NO_VALUE:
+        return "NO_VALUE";
+    default:
+        return "ERROR";
     }
 }
 
 constexpr std::string_view datumIdStr(PppDatumId datum)
 {
     switch (datum) {
-    case PppDatumId::WGS84:    return "WGS84";
-    case PppDatumId::B2b:      return "B2b";
-    case PppDatumId::NO_VALUE: return "NO_VALUE";
-    default:                   return "ERROR";
+    case PppDatumId::WGS84:
+        return "WGS84";
+    case PppDatumId::B2b:
+        return "B2b";
+    case PppDatumId::NO_VALUE:
+        return "NO_VALUE";
+    default:
+        return "ERROR";
     }
 }
