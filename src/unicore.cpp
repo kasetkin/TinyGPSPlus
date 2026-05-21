@@ -162,7 +162,7 @@ int32_t parseStationId(const char *str)
     /// for some unclear reason it is not 'just' 9901 but "9901",
     /// so we need to remove quotes
     std::string cppStr(str);
-    if ((cppStr[0] == '"') && (cppStr[cppStr.size() - 1] == '"') && (cppStr.size() > 2))
+    if (cppStr.starts_with('"') && cppStr.ends_with('"') && cppStr.size() > 2)
         cppStr = cppStr.substr(1, cppStr.size() - 2);
 
     const int32_t result = static_cast<int32_t>(std::atol(cppStr.c_str()));
