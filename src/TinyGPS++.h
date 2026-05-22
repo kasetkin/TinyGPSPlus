@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <inttypes.h>
 // #include "Arduino.h"
 #include <limits.h>
+#include <array>
 
 #define _GPS_VERSION "1.1.0" // software version of this library
 #define _GPS_MPH_PER_KNOT 1.15077945
@@ -212,14 +213,14 @@ public:
    bool isUpdated() const  { return updated; }
    bool isValid() const    { return valid; }
    uint32_t age() const    { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
-   const char *value()     { updated = false; return buffer; }
+   const char *value()     { updated = false; return buffer.data(); }
 
 private:
    void commit();
    void set(const char *term);
 
-   char stagingBuffer[_GPS_MAX_FIELD_SIZE + 1];
-   char buffer[_GPS_MAX_FIELD_SIZE + 1];
+   std::array<char, _GPS_MAX_FIELD_SIZE + 1> stagingBuffer{};
+   std::array<char, _GPS_MAX_FIELD_SIZE + 1> buffer{};
    unsigned long lastCommitTime;
    bool valid, updated;
    const char *sentenceName;

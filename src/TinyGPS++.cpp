@@ -24,7 +24,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "TinyGPS++.h"
 
 #include <ctype.h>
-#include <cstring>
 #include <cstddef>
 #include <cstdlib>
 #include <cmath>
@@ -239,7 +238,7 @@ bool TinyGPSPlus::endOfTermHandler()
       }
 
       // Commit all custom listeners of this sentence type
-      for (TinyGPSCustom *p = customCandidates; p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0; p = p->next)
+      for (TinyGPSCustom *p = customCandidates; p != NULL && std::string_view(p->sentenceName) == customCandidates->sentenceName; p = p->next)
          p->commit();
       return true;
     }
@@ -255,16 +254,16 @@ bool TinyGPSPlus::endOfTermHandler()
   // the first term determines the sentence type
   if (curTermNumber == 0)
   {
-    if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && !strcmp(term + 2, _RMCterm))
+    if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term + 2) == _RMCterm)
       curSentenceType = GPS_SENTENCE_RMC;
-    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && !strcmp(term + 2, _GGAterm))
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term + 2) == _GGAterm)
       curSentenceType = GPS_SENTENCE_GGA;
     else
       curSentenceType = GPS_SENTENCE_OTHER;
 
     // Any custom candidates of this sentence type?
-    for (customCandidates = customElts; customCandidates != NULL && strcmp(customCandidates->sentenceName, term) < 0; customCandidates = customCandidates->next);
-    if (customCandidates != NULL && strcmp(customCandidates->sentenceName, term) > 0)
+    for (customCandidates = customElts; customCandidates != NULL && std::string_view(customCandidates->sentenceName) < term; customCandidates = customCandidates->next);
+    if (customCandidates != NULL && std::string_view(customCandidates->sentenceName) > term)
        customCandidates = NULL;
 
     return false;
@@ -327,7 +326,7 @@ bool TinyGPSPlus::endOfTermHandler()
   }
 
   // Set custom values as needed
-  for (TinyGPSCustom *p = customCandidates; p != NULL && strcmp(p->sentenceName, customCandidates->sentenceName) == 0 && p->termNumber <= curTermNumber; p = p->next)
+  for (TinyGPSCustom *p = customCandidates; p != NULL && std::string_view(p->sentenceName) == customCandidates->sentenceName && p->termNumber <= curTermNumber; p = p->next)
     if (p->termNumber == curTermNumber)
          p->set(term);
 
@@ -541,8 +540,8 @@ void TinyGPSCustom::begin(TinyGPSPlus &gps, const char *_sentenceName, int _term
    updated = valid = false;
    sentenceName = _sentenceName;
    termNumber = _termNumber;
-   memset(stagingBuffer, '\0', sizeof(stagingBuffer));
-   memset(buffer, '\0', sizeof(buffer));
+   stagingBuffer.fill('\0');
+   buffer.fill('\0');
 
    // Insert this item into the GPS tree
    gps.insertCustom(this, _sentenceName, _termNumber);
@@ -550,14 +549,16 @@ void TinyGPSCustom::begin(TinyGPSPlus &gps, const char *_sentenceName, int _term
 
 void TinyGPSCustom::commit()
 {
-   strcpy(this->buffer, this->stagingBuffer);
+   buffer = stagingBuffer;
    lastCommitTime = millis();
    valid = updated = true;
 }
 
 void TinyGPSCustom::set(const char *term)
 {
-   strncpy(this->stagingBuffer, term, sizeof(this->stagingBuffer) - 1);
+   const std::string_view sv{term};
+   const auto n = sv.copy(stagingBuffer.data(), stagingBuffer.size() - 1);
+   stagingBuffer[n] = '\0';
 }
 
 void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, const char *sentenceName, int termNumber)
@@ -566,8 +567,9 @@ void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, const char *sentenceName, in
 
    for (ppelt = &this->customElts; *ppelt != NULL; ppelt = &(*ppelt)->next)
    {
-      int cmp = strcmp(sentenceName, (*ppelt)->sentenceName);
-      if (cmp < 0 || (cmp == 0 && termNumber < (*ppelt)->termNumber))
+      const std::string_view svName{sentenceName};
+      const std::string_view svNext{(*ppelt)->sentenceName};
+      if (svName < svNext || (svName == svNext && termNumber < (*ppelt)->termNumber))
          break;
    }
 
