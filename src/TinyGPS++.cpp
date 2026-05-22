@@ -170,35 +170,6 @@ int32_t TinyGPSPlus::parseDecimal(std::string_view term)
 }
 
 // static
-// Float from_chars approach — single parse + round (optimal with hardware FPU)
-int32_t TinyGPSPlus::parseDecimalFloat(std::string_view term)
-{
-  float value = 0.0f;
-  std::from_chars(term.data(), term.data() + term.size(), value);
-  return static_cast<int32_t>(std::round(value * 100.0f));
-}
-
-// static
-// Original pointer-arithmetic baseline (assumes null-terminated input)
-int32_t TinyGPSPlus::parseDecimalOld(std::string_view term)
-{
-  const char *p = term.data();
-  bool negative = *p == '-';
-  if (negative)
-    ++p;
-  int32_t ret = 100 * (int32_t)std::atol(p);
-  while (std::isdigit(*p))
-    ++p;
-  if (*p == '.' && std::isdigit(p[1]))
-  {
-    ret += 10 * (p[1] - '0');
-    if (std::isdigit(p[2]))
-      ret += p[2] - '0';
-  }
-  return negative ? -ret : ret;
-}
-
-// static
 // Parse degrees in that funny NMEA format DDMM.MMMM
 void TinyGPSPlus::parseDegrees(std::string_view term, RawDegrees &deg)
 {

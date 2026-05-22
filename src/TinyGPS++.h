@@ -257,8 +257,6 @@ public:
   static std::string_view cardinal(double course);
 
   static int32_t parseDecimal(std::string_view term);
-  static int32_t parseDecimalFloat(std::string_view term);
-  static int32_t parseDecimalOld(std::string_view term);
   static void parseDegrees(std::string_view term, RawDegrees &deg);
 
   uint32_t charsProcessed()   const { return encodedCharCount; }
