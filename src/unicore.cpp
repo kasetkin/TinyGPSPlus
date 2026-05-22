@@ -2,67 +2,61 @@
 #include <cctype>
 #include <cmath>
 #include <string>
+#include <charconv>
 #include <algorithm>
 #include <ranges>
 
-int32_t parseDegreesLatLon(const char *str)
+int32_t parseDegreesLatLon(std::string_view str)
 {
-    // LOG_DEBUG("parse decimal degree from sring [%s]", str);
+    // LOG_DEBUG("parse decimal degree from string [%s]", str);
 
-    const bool isNegative = (*str == '-');
+    const bool isNegative = !str.empty() && str.front() == '-';
     if (isNegative)
-    	++str;
+        str.remove_prefix(1);
 
     // An invalid character
-    if (!isdigit(*str))
+    if (str.empty() || !std::isdigit(static_cast<unsigned char>(str.front())))
         return PPP_BAD_LATLON;
 
-    const int32_t roundDigits = static_cast<int32_t>(std::atol(str));
+    int32_t roundDigits = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), roundDigits);
     // LOG_DEBUG("left part of str is %d", roundDigits);
     if (roundDigits > 181)
         return PPP_BAD_LATLON;
 
-    while (isdigit(*str))
-        ++str;
-
     // Degree must have a decimal point
-    if (*str != '.')
+    if (ptr >= str.data() + str.size() || *ptr != '.')
         return PPP_BAD_LATLON;
-        
-    /// skip '.'
-    ++str;
+
+    ++ptr; // skip '.'
 
     constexpr int32_t meshtasticLatLonMultiplier = 1000 * 1000 * 10;
     int32_t currectDigitMultiplier = meshtasticLatLonMultiplier / 10;
     int32_t accumulator = 0;
-    do
+    const auto* const end = str.data() + str.size();
+    while (ptr < end && std::isdigit(static_cast<unsigned char>(*ptr)) && currectDigitMultiplier > 0)
     {
-        // LOG_DEBUG("digit is [%c], multiplier is [%d], accum is [%d]", *str, currectDigitMultiplier, accumulator);
-        accumulator += (*str - '0') * currectDigitMultiplier;
+        // LOG_DEBUG("digit is [%c], multiplier is [%d], accum is [%d]", *ptr, currectDigitMultiplier, accumulator);
+        accumulator += (*ptr - '0') * currectDigitMultiplier;
         currectDigitMultiplier /= 10;
-    } while (isdigit(*++str) && (currectDigitMultiplier > 0));
-
-    // const uint64_t rightOfDecimal = static_cast<uint64_t>(atoll(str));
-    // LOG_DEBUG("right part of str is %d", rightOfDecimal);
-    
-    // const int32_t result = leftOfDecimal * meshtasticLatLonMultiplier + rightOfDecimal;
-    // LOG_DEBUG("result value is %d", result);
+        ++ptr;
+    }
 
     const int32_t result = roundDigits * meshtasticLatLonMultiplier + accumulator;
     // LOG_DEBUG("result is [%d]", result);
     return isNegative ? -result : result;
 }
 
-std::string prepareString(const char *str)
+static std::string prepareString(std::string_view str)
 {
-    return std::string_view(str)
+    return str
         | std::views::transform([](unsigned char c) static {
             return static_cast<char>(std::toupper(c));
         })
         | std::ranges::to<std::string>();
 }
 
-std::pair<std::string, std::string> splitAndPrepareString(const char *str)
+static std::pair<std::string, std::string> splitAndPrepareString(std::string_view str)
 {
     const std::string cppStr = prepareString(str);
     /// first check and skip "17;" part of "17;SOL_COMPUTED" string
@@ -75,11 +69,13 @@ std::pair<std::string, std::string> splitAndPrepareString(const char *str)
     return {"", cppStr};
 }
 
-PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs)
+PppSolutionStatus parseSolutionStatus(std::string_view str, uint16_t &outputDelayMs)
 {
     const auto [leapSecsStr, solStatusStr] = splitAndPrepareString(str);
 
-    outputDelayMs = static_cast<uint16_t>(std::atol(leapSecsStr.c_str()));
+    uint16_t val = 0;
+    std::from_chars(leapSecsStr.data(), leapSecsStr.data() + leapSecsStr.size(), val);
+    outputDelayMs = val;
 
     if (solStatusStr == "SOL_COMPUTED")
         return PppSolutionStatus::SOL_COMPUTED;
@@ -91,11 +87,9 @@ PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs)
         return PppSolutionStatus::COV_TRACE;
     else
         return PppSolutionStatus::NO_VALUE;
-
-    return PppSolutionStatus::NO_VALUE;
 }
 
-PositionVelocityType parsePositionType(const char *str)
+PositionVelocityType parsePositionType(std::string_view str)
 {
     const std::string cppStr = prepareString(str);
     if (cppStr == "NONE")
@@ -140,11 +134,9 @@ PositionVelocityType parsePositionType(const char *str)
         return PositionVelocityType::PPP;
     else
         return PositionVelocityType::NO_VALUE;
-
-    return PositionVelocityType::NO_VALUE;
 }
 
-PppDatumId parseDatumId(const char *str)
+PppDatumId parseDatumId(std::string_view str)
 {
     const std::string cppStr = prepareString(str);
     if (cppStr == "WGS84")
@@ -153,20 +145,17 @@ PppDatumId parseDatumId(const char *str)
         return PppDatumId::B2b;
     else
         return PppDatumId::NO_VALUE;
-
-    return PppDatumId::NO_VALUE;
 }
 
-int32_t parseStationId(const char *str)
+int32_t parseStationId(std::string_view str)
 {
     /// for some unclear reason it is not 'just' 9901 but "9901",
     /// so we need to remove quotes
-    std::string cppStr(str);
-    if (cppStr.starts_with('"') && cppStr.ends_with('"') && cppStr.size() > 2)
-        cppStr = cppStr.substr(1, cppStr.size() - 2);
-
-    const int32_t result = static_cast<int32_t>(std::atol(cppStr.c_str()));
-    // LOG_DEBUG("parse StationId for PPP, input [%s], result is [%d]", str, result);
+    if (str.starts_with('"') && str.ends_with('"') && str.size() > 2)
+        str = str.substr(1, str.size() - 2);
+    int32_t result = 0;
+    std::from_chars(str.data(), str.data() + str.size(), result);
+    // LOG_DEBUG("parse StationId for PPP, result is [%d]", result);
     return result;
 }
 
@@ -192,39 +181,27 @@ PppService parsePppService(const int32_t stationId)
     default:
         return PppService::NO_VALUE;
     }
-
-    return PppService::NO_VALUE;
 }
-
-// std::uint32_t calculateCRC32(std::uint8_t *szBuf, int iSize)
-// {
-//     std::uint32_t ulCRC = 0;
-//     for (int iIndex = 0; iIndex < iSize; iIndex++)
-//         ulCRC = aulCrcTable[(ulCRC ^ szBuf[iIndex]) & 0xff] ^ (ulCRC >> 8);
-
-//     return ulCRC;
-// }
 
 void pushByte32BitCrc(std::uint8_t newChar, std::uint32_t &checksum)
 {
-    // std::uint32_t oldValue = checksum;
     checksum = aulCrcTable[(checksum ^ newChar) & 0xff] ^ (checksum >> 8);
 }
 
 uint32_t computeUtxTime(const int32_t week, const int32_t milliSecsOfWeek, const uint32_t leapSecs, uint32_t &outMillisecs)
 {
     constexpr uint32_t MILLIS_IN_SEC = 1000;
-    
+
     /// delta in seconds between:
     ///     - UTC epoch 1970-01-01 00:00:00
-    /// and 
+    /// and
     ///     - GPS epoch 1980-01-06 00:00:00
     constexpr uint32_t GPS_EPOCH_TO_UNIX_EPOCH = 3657 * 24 * 3600;
 
     outMillisecs = milliSecsOfWeek % MILLIS_IN_SEC;
 
     constexpr uint32_t SECONDS_IN_WEEK = 60 * 60 * 24 * 7;
-    uint32_t result = static_cast<uint32_t>(week) * SECONDS_IN_WEEK 
+    uint32_t result = static_cast<uint32_t>(week) * SECONDS_IN_WEEK
                     + (static_cast<uint32_t>(milliSecsOfWeek) / MILLIS_IN_SEC)
                     - static_cast<uint32_t>(leapSecs)
                     + GPS_EPOCH_TO_UNIX_EPOCH;

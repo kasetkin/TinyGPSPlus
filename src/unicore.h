@@ -76,11 +76,11 @@ struct PppInfo {
 // extern PppInfo localPPP;
 
 /// return in Meshtastic format, multiply by 1e-7 to get degrees
-int32_t parseDegreesLatLon(const char *str);
-PppSolutionStatus parseSolutionStatus(const char *str, uint16_t &outputDelayMs);
-PositionVelocityType parsePositionType(const char *str);
-PppDatumId parseDatumId(const char *str);
-int32_t parseStationId(const char *str);
+int32_t parseDegreesLatLon(std::string_view str);
+PppSolutionStatus parseSolutionStatus(std::string_view str, uint16_t &outputDelayMs);
+PositionVelocityType parsePositionType(std::string_view str);
+PppDatumId parseDatumId(std::string_view str);
+int32_t parseStationId(std::string_view str);
 PppService parsePppService(const int32_t stationId);
 
 inline constexpr std::uint32_t aulCrcTable[256] =

@@ -30,6 +30,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // #include "Arduino.h"
 #include <limits.h>
 #include <array>
+#include <string_view>
+#include <charconv>
 
 #define _GPS_VERSION "1.1.0" // software version of this library
 #define _GPS_MPH_PER_KNOT 1.15077945
@@ -83,8 +85,8 @@ private:
    Mode fixMode, newFixMode;
    uint32_t lastCommitTime;
    void commit();
-   void setLatitude(const char *term);
-   void setLongitude(const char *term);
+   void setLatitude(std::string_view term);
+   void setLongitude(std::string_view term);
 };
 
 struct TinyGPSDate
@@ -108,7 +110,7 @@ private:
    uint32_t date, newDate;
    uint32_t lastCommitTime;
    void commit();
-   void setDate(const char *term);
+   void setDate(std::string_view term);
 };
 
 struct TinyGPSTime
@@ -133,7 +135,7 @@ private:
    uint32_t time, newTime;
    uint32_t lastCommitTime;
    void commit();
-   void setTime(const char *term);
+   void setTime(std::string_view term);
 };
 
 struct TinyGPSDecimal
@@ -153,7 +155,7 @@ private:
    uint32_t lastCommitTime;
    int32_t val, newval;
    void commit();
-   void set(const char *term);
+   void set(std::string_view term);
 };
 
 struct TinyGPSInteger
@@ -173,7 +175,7 @@ private:
    uint32_t lastCommitTime;
    uint32_t val, newval;
    void commit();
-   void set(const char *term);
+   void set(std::string_view term);
 };
 
 struct TinyGPSSpeed : TinyGPSDecimal
@@ -207,23 +209,23 @@ class TinyGPSCustom
 {
 public:
    TinyGPSCustom() {};
-   TinyGPSCustom(TinyGPSPlus &gps, const char *sentenceName, int termNumber);
-   void begin(TinyGPSPlus &gps, const char *_sentenceName, int _termNumber);
+   TinyGPSCustom(TinyGPSPlus &gps, std::string_view sentenceName, int termNumber);
+   void begin(TinyGPSPlus &gps, std::string_view _sentenceName, int _termNumber);
 
    bool isUpdated() const  { return updated; }
    bool isValid() const    { return valid; }
    uint32_t age() const    { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
-   const char *value()     { updated = false; return buffer.data(); }
+   std::string_view value() { updated = false; return buffer.data(); }
 
 private:
    void commit();
-   void set(const char *term);
+   void set(std::string_view term);
 
    std::array<char, _GPS_MAX_FIELD_SIZE + 1> stagingBuffer{};
    std::array<char, _GPS_MAX_FIELD_SIZE + 1> buffer{};
    unsigned long lastCommitTime;
    bool valid, updated;
-   const char *sentenceName;
+   std::string_view sentenceName;
    int termNumber;
    friend class TinyGPSPlus;
    TinyGPSCustom *next;
@@ -246,16 +248,18 @@ public:
   TinyGPSHDOP hdop;
   TinyGPSAltitude geoidHeight;
 
-  static const char *libraryVersion() { return _GPS_VERSION; }
+  static std::string_view libraryVersion() { return _GPS_VERSION; }
 
   static double distanceBetween(double lat1, double long1, double lat2, double long2);
   static double courseTo(double lat1, double long1, double lat2, double long2);
   static double radians(double degrees);
   static double degrees(double radians);
-  static const char *cardinal(double course);
+  static std::string_view cardinal(double course);
 
-  static int32_t parseDecimal(const char *term);
-  static void parseDegrees(const char *term, RawDegrees &deg);
+  static int32_t parseDecimal(std::string_view term);
+  static int32_t parseDecimalFloat(std::string_view term);
+  static int32_t parseDecimalOld(std::string_view term);
+  static void parseDegrees(std::string_view term, RawDegrees &deg);
 
   uint32_t charsProcessed()   const { return encodedCharCount; }
   uint32_t sentencesWithFix() const { return sentencesWithFixCount; }
@@ -270,7 +274,7 @@ private:
   // parsing state variables
   uint8_t parity;
   bool isChecksumTerm;
-  char term[_GPS_MAX_FIELD_SIZE];
+  std::array<char, _GPS_MAX_FIELD_SIZE> term{};
   uint8_t curSentenceType;
   uint8_t curTermNumber;
   uint8_t curTermOffset;
@@ -284,7 +288,7 @@ private:
   friend class TinyGPSCustom;
   TinyGPSCustom *customElts;
   TinyGPSCustom *customCandidates;
-  void insertCustom(TinyGPSCustom *pElt, const char *sentenceName, int index);
+  void insertCustom(TinyGPSCustom *pElt, std::string_view sentenceName, int index);
 
   // statistics
   uint32_t encodedCharCount;
