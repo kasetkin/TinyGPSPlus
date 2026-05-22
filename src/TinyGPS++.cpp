@@ -31,11 +31,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <numbers>
 #include <chrono>
 #include <iterator>
+#include <algorithm>
+#include <string_view>
 
 #include "unicore.h"
 
 #define _RMCterm "RMC"
 #define _GGAterm "GGA"
+
+static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABL"}; // GP, GN, GA, GB, GL
 
 #if !defined(ARDUINO) && !defined(__AVR__)
 // Alternate implementation of millis() that relies on std
@@ -251,9 +255,9 @@ bool TinyGPSPlus::endOfTermHandler()
   // the first term determines the sentence type
   if (curTermNumber == 0)
   {
-    if (term[0] == 'G' && strchr("PNABL", term[1]) != NULL && !strcmp(term + 2, _RMCterm))
+    if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && !strcmp(term + 2, _RMCterm))
       curSentenceType = GPS_SENTENCE_RMC;
-    else if (term[0] == 'G' && strchr("PNABL", term[1]) != NULL && !strcmp(term + 2, _GGAterm))
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && !strcmp(term + 2, _GGAterm))
       curSentenceType = GPS_SENTENCE_GGA;
     else
       curSentenceType = GPS_SENTENCE_OTHER;
