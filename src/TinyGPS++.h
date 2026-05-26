@@ -30,6 +30,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // #include "Arduino.h"
 #include <limits.h>
 #include <array>
+#include <cstddef>
+#include <optional>
+#include <span>
 #include <string_view>
 #include <charconv>
 
@@ -57,6 +60,46 @@ public:
 // Alternate implementation of millis() that relies on std
 unsigned long millis();
 #endif
+
+/// GNSS constellation identifier; values match the NMEA 0183 4.10 "System ID"
+/// field used in $--GSA sentences (Section A.2.42).
+enum class GnssSystemId : uint8_t
+{
+   Unknown = 0,
+   GPS     = 1,
+   GLONASS = 2,
+   Galileo = 3,
+   BeiDou  = 4,
+   QZSS    = 5,
+};
+
+/// GSA field 1: Mode (Auto / Manual switch between 2D and 3D).
+enum class GsaFixMode : char
+{
+   Manual = 'M',
+   Auto   = 'A',
+};
+
+/// GSA field 2: Fix type.
+enum class GsaFixType : uint8_t
+{
+   None  = 1,
+   Fix2D = 2,
+   Fix3D = 3,
+};
+
+/// A single satellite as reported by GSA (and later GSV).
+/// Fields populated only by GSV are kept as std::optional so "never observed"
+/// is a distinct type-level state.
+struct TinyGPSSatellite
+{
+   uint8_t                prn          = 0;
+   GnssSystemId           systemId     = GnssSystemId::Unknown;
+   std::optional<int16_t> elevationDeg;  // reserved for GSV
+   std::optional<int16_t> azimuthDeg;    // reserved for GSV
+   std::optional<int16_t> cn0DbHz;       // reserved for GSV
+   bool                   inSolution   = false;  // set true by GSA
+};
 
 struct TinyGPSLocation
 {
@@ -204,6 +247,88 @@ struct TinyGPSHDOP : TinyGPSDecimal
    double hdop() { return value() / 100.0; }
 };
 
+/// Holds the active-solution satellite list and the scalar quality fields from
+/// $--GSA sentences. Multi-constellation receivers (GN talker) emit one GSA per
+/// constellation per epoch; this class accumulates them keyed by SystemID so
+/// inSolution() returns the union across all constellations.
+/// Future GSV parsing will fill TinyGPSSatellite::elevationDeg/azimuthDeg/cn0DbHz.
+class TinyGPSSatellites
+{
+   friend class TinyGPSPlus;
+public:
+   static constexpr std::size_t MaxPerSystem = 12;          // satellite slots per GSA
+   static constexpr std::size_t NumKnownSystems = 5;        // GPS..QZSS in GnssSystemId
+   static constexpr std::size_t MaxTotalSatellites = NumKnownSystems * MaxPerSystem;
+
+   bool isValid() const   { return valid; }
+   bool isUpdated() const { return updated; }
+   uint32_t age() const   { return valid ? millis() - lastCommitTime : static_cast<uint32_t>(ULONG_MAX); }
+
+   // PascalCase to disambiguate from the same-named private members, following
+   // the FixMode()/FixQuality() pattern in TinyGPSLocation.
+   GsaFixMode Mode()    { updated = false; return mode; }
+   GsaFixType FixType() { updated = false; return fixType; }
+
+   int32_t pdopRaw() { updated = false; return pdop; }
+   int32_t hdopRaw() { updated = false; return hdop; }
+   int32_t vdopRaw() { updated = false; return vdop; }
+
+   /// Union of satellites currently in solution across all known constellations.
+   std::span<const TinyGPSSatellite> inSolution()
+   {
+      updated = false;
+      return std::span<const TinyGPSSatellite>(flatList.data(), flatCount);
+   }
+   std::size_t inSolutionCount() const { return flatCount; }
+
+   TinyGPSSatellites() = default;
+
+private:
+   struct PerSystem
+   {
+      std::array<TinyGPSSatellite, MaxPerSystem> sats{};
+      std::size_t count = 0;
+      uint32_t lastCommitTime = 0;
+      bool valid = false;
+   };
+
+   bool valid = false;
+   bool updated = false;
+   uint32_t lastCommitTime = 0;
+
+   GsaFixMode mode    = GsaFixMode::Auto;
+   GsaFixType fixType = GsaFixType::None;
+   int32_t    pdop    = 0;
+   int32_t    hdop    = 0;
+   int32_t    vdop    = 0;
+
+   GsaFixMode newMode    = GsaFixMode::Auto;
+   GsaFixType newFixType = GsaFixType::None;
+   int32_t    newPdop    = 0;
+   int32_t    newHdop    = 0;
+   int32_t    newVdop    = 0;
+
+   std::array<TinyGPSSatellite, MaxPerSystem> stagingList{};
+   std::size_t stagingCount = 0;
+   GnssSystemId stagingSystemId = GnssSystemId::Unknown;
+
+   std::array<PerSystem, NumKnownSystems> committedBySystem{};
+
+   std::array<TinyGPSSatellite, MaxTotalSatellites> flatList{};
+   std::size_t flatCount = 0;
+
+   void beginGsaSentence(GnssSystemId derivedFromTalker);
+   void setMode(std::string_view term);
+   void setFixType(std::string_view term);
+   void setPdop(std::string_view term);
+   void setHdop(std::string_view term);
+   void setVdop(std::string_view term);
+   void setGsaSystemId(std::string_view term);
+   void appendGsaSatellite(std::string_view term);
+   void commitGsa();
+   void rebuildFlatList();
+};
+
 class TinyGPSPlus;
 class TinyGPSCustom
 {
@@ -244,7 +369,8 @@ public:
   TinyGPSSpeed speed;
   TinyGPSCourse course;
   TinyGPSAltitude altitude;
-  TinyGPSInteger satellites;
+  TinyGPSInteger satellitesUsedCount;  // GGA term 7: number of satellites used in the fix
+  TinyGPSSatellites satellites;        // GSA-derived satellite list + DOP/mode/fix-type
   TinyGPSHDOP hdop;
   TinyGPSAltitude geoidHeight;
 
@@ -267,7 +393,7 @@ public:
   uint8_t  sentenceType()      const { return curSentenceType; }
 
 private:
-  enum {GPS_SENTENCE_GGA, GPS_SENTENCE_RMC, GPS_SENTENCE_OTHER};
+  enum {GPS_SENTENCE_GGA, GPS_SENTENCE_RMC, GPS_SENTENCE_GSA, GPS_SENTENCE_OTHER};
 
   // parsing state variables
   uint8_t parity;

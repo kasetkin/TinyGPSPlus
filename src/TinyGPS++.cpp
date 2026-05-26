@@ -38,8 +38,27 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #define _RMCterm "RMC"
 #define _GGAterm "GGA"
+#define _GSAterm "GSA"
 
 static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABL"}; // GP, GN, GA, GB, GL
+
+/// Map the second character of an NMEA talker ID (the suffix after 'G') to the
+/// GNSS constellation it identifies. Used when a GSA sentence omits the
+/// NMEA 4.10 System ID field (term 18). 'N' (combined GN talker) maps to
+/// Unknown because the constellation is only carried in the field.
+static constexpr GnssSystemId suffixToSystemId(char suffix) noexcept
+{
+   switch (suffix)
+   {
+      case 'P': return GnssSystemId::GPS;
+      case 'L': return GnssSystemId::GLONASS;
+      case 'A': return GnssSystemId::Galileo;
+      case 'B': return GnssSystemId::BeiDou;   // GB
+      case 'Q': return GnssSystemId::QZSS;
+      case 'N': return GnssSystemId::Unknown;  // GN — combined, rely on field 18
+      default:  return GnssSystemId::Unknown;
+   }
+}
 
 #if !defined(ARDUINO) && !defined(__AVR__)
 // Alternate implementation of millis() that relies on std
@@ -184,7 +203,12 @@ void TinyGPSPlus::parseDegrees(std::string_view term, RawDegrees &deg)
   {
     ++ptr;
     uint32_t frac = 0;
-    auto [fptr, fec] = std::from_chars(ptr, end, frac);
+    // Cap at 7 digits — the multiplier (10^7) would underflow to 0 beyond
+    // that and silently drop the entire fractional contribution. Receivers
+    // like the UM980 emit 8 fractional digits in the minutes field; the
+    // extra digit is truncated, matching the parseDecimal pattern.
+    const auto* const fracEnd = ptr + std::min<ptrdiff_t>(end - ptr, 7);
+    auto [fptr, fec] = std::from_chars(ptr, fracEnd, frac);
     const int digits = static_cast<int>(fptr - ptr);
     for (int i = 0; i < digits; ++i)
       multiplier /= 10;
@@ -245,8 +269,11 @@ bool TinyGPSPlus::endOfTermHandler()
           altitude.commit();
           geoidHeight.commit();
         }
-        satellites.commit();
+        satellitesUsedCount.commit();
         hdop.commit();
+        break;
+      case GPS_SENTENCE_GSA:
+        satellites.commitGsa();
         break;
       }
 
@@ -271,6 +298,11 @@ bool TinyGPSPlus::endOfTermHandler()
       curSentenceType = GPS_SENTENCE_RMC;
     else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == _GGAterm)
       curSentenceType = GPS_SENTENCE_GGA;
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == _GSAterm)
+    {
+      curSentenceType = GPS_SENTENCE_GSA;
+      satellites.beginGsaSentence(suffixToSystemId(term[1]));
+    }
     else
       curSentenceType = GPS_SENTENCE_OTHER;
 
@@ -322,7 +354,7 @@ bool TinyGPSPlus::endOfTermHandler()
       location.newFixQuality = (TinyGPSLocation::Quality)term[0];
       break;
     case COMBINE(GPS_SENTENCE_GGA, 7): // Satellites used (GGA)
-      satellites.set(termSv);
+      satellitesUsedCount.set(termSv);
       break;
     case COMBINE(GPS_SENTENCE_GGA, 8): // HDOP
       hdop.set(termSv);
@@ -335,6 +367,38 @@ bool TinyGPSPlus::endOfTermHandler()
       break;
     case COMBINE(GPS_SENTENCE_GGA, 11): // Height over Geoid
       geoidHeight.set(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 1): // Mode (Auto/Manual)
+      satellites.setMode(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 2): // Fix type (1=no fix, 2=2D, 3=3D)
+      satellites.setFixType(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 3):  // Satellite PRNs in fix (12 slots, terms 3..14)
+    case COMBINE(GPS_SENTENCE_GSA, 4):
+    case COMBINE(GPS_SENTENCE_GSA, 5):
+    case COMBINE(GPS_SENTENCE_GSA, 6):
+    case COMBINE(GPS_SENTENCE_GSA, 7):
+    case COMBINE(GPS_SENTENCE_GSA, 8):
+    case COMBINE(GPS_SENTENCE_GSA, 9):
+    case COMBINE(GPS_SENTENCE_GSA, 10):
+    case COMBINE(GPS_SENTENCE_GSA, 11):
+    case COMBINE(GPS_SENTENCE_GSA, 12):
+    case COMBINE(GPS_SENTENCE_GSA, 13):
+    case COMBINE(GPS_SENTENCE_GSA, 14):
+      satellites.appendGsaSatellite(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 15): // PDOP
+      satellites.setPdop(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 16): // HDOP
+      satellites.setHdop(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 17): // VDOP
+      satellites.setVdop(termSv);
+      break;
+    case COMBINE(GPS_SENTENCE_GSA, 18): // System ID (NMEA 0183 4.10)
+      satellites.setGsaSystemId(termSv);
       break;
   }
 
@@ -591,4 +655,129 @@ void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, std::string_view sentenceNam
 
    pElt->next = *ppelt;
    *ppelt = pElt;
+}
+
+//
+// TinyGPSSatellites — native parsing of $--GSA sentences
+//
+
+void TinyGPSSatellites::beginGsaSentence(GnssSystemId derivedFromTalker)
+{
+   stagingCount = 0;
+   stagingSystemId = derivedFromTalker;
+   newMode    = GsaFixMode::Auto;
+   newFixType = GsaFixType::None;
+   newPdop    = 0;
+   newHdop    = 0;
+   newVdop    = 0;
+}
+
+void TinyGPSSatellites::setMode(std::string_view term)
+{
+   if (!term.empty() && (term.front() == 'A' || term.front() == 'M'))
+      newMode = static_cast<GsaFixMode>(term.front());
+}
+
+void TinyGPSSatellites::setFixType(std::string_view term)
+{
+   uint8_t v = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{} && v >= 1 && v <= 3)
+      newFixType = static_cast<GsaFixType>(v);
+}
+
+void TinyGPSSatellites::setPdop(std::string_view term)
+{
+   newPdop = TinyGPSPlus::parseDecimal(term);
+}
+
+void TinyGPSSatellites::setHdop(std::string_view term)
+{
+   newHdop = TinyGPSPlus::parseDecimal(term);
+}
+
+void TinyGPSSatellites::setVdop(std::string_view term)
+{
+   newVdop = TinyGPSPlus::parseDecimal(term);
+}
+
+void TinyGPSSatellites::setGsaSystemId(std::string_view term)
+{
+   uint8_t v = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{}
+       && v >= static_cast<uint8_t>(GnssSystemId::GPS)
+       && v <= static_cast<uint8_t>(GnssSystemId::QZSS))
+   {
+      stagingSystemId = static_cast<GnssSystemId>(v);
+   }
+   // empty / unparseable / out-of-range: leave the talker-derived value intact
+}
+
+void TinyGPSSatellites::appendGsaSatellite(std::string_view term)
+{
+   if (term.empty() || stagingCount >= MaxPerSystem)
+      return;
+   uint8_t prn = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), prn).ec != std::errc{})
+      return;
+   if (prn == 0)
+      return;
+   TinyGPSSatellite& slot = stagingList[stagingCount++];
+   slot = TinyGPSSatellite{};
+   slot.prn = prn;
+   slot.systemId = stagingSystemId;
+   slot.inSolution = true;
+}
+
+void TinyGPSSatellites::commitGsa()
+{
+   mode    = newMode;
+   fixType = newFixType;
+   pdop    = newPdop;
+   hdop    = newHdop;
+   vdop    = newVdop;
+
+   // Per-system snapshot: store under the constellation index. The Unknown
+   // talker (GN with no System ID field) gets routed to the GPS slot as a
+   // best-effort fallback so its satellites still appear in inSolution()
+   // — pre-NMEA-4.10 GN sentences shouldn't be emitted by spec-compliant
+   // receivers, and the UM980 does send the System ID field.
+   const auto sysIdx = (stagingSystemId == GnssSystemId::Unknown)
+        ? static_cast<std::size_t>(GnssSystemId::GPS) - 1
+        : static_cast<std::size_t>(stagingSystemId) - 1;
+   // The talker prefix tagged each satellite at append-time, but the NMEA
+   // 4.10 System ID field (term 18) may have refined it afterwards. Apply
+   // the final stagingSystemId to every satellite so callers see a
+   // consistent constellation tag on each TinyGPSSatellite record.
+   const GnssSystemId committedSystemId = (stagingSystemId == GnssSystemId::Unknown)
+        ? GnssSystemId::GPS
+        : stagingSystemId;
+   for (std::size_t i = 0; i < stagingCount; ++i)
+      stagingList[i].systemId = committedSystemId;
+
+   if (sysIdx < NumKnownSystems)
+   {
+      PerSystem& slot = committedBySystem[sysIdx];
+      slot.count = stagingCount;
+      for (std::size_t i = 0; i < stagingCount; ++i)
+         slot.sats[i] = stagingList[i];
+      slot.lastCommitTime = millis();
+      slot.valid = true;
+   }
+
+   rebuildFlatList();
+   lastCommitTime = millis();
+   valid = true;
+   updated = true;
+}
+
+void TinyGPSSatellites::rebuildFlatList()
+{
+   flatCount = 0;
+   for (const PerSystem& slot : committedBySystem)
+   {
+      if (!slot.valid)
+         continue;
+      for (std::size_t i = 0; i < slot.count && flatCount < flatList.size(); ++i)
+         flatList[flatCount++] = slot.sats[i];
+   }
 }
