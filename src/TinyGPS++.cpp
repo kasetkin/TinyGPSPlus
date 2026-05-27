@@ -29,7 +29,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include <cmath>
 #include <numbers>
 #include <charconv>
-#include <chrono>
 #include <iterator>
 #include <algorithm>
 #include <string_view>
@@ -61,15 +60,13 @@ static constexpr GnssSystemId suffixToSystemId(char suffix) noexcept
 }
 
 #if !defined(ARDUINO) && !defined(__AVR__)
-// Alternate implementation of millis() that relies on std
+#include "esp_timer.h"
+// ESP-IDF port: monotonic microseconds since boot. Always non-zero by the time
+// app_main runs, so lastCommitTime = millis() never collides with the "never
+// committed" sentinel of 0.
 unsigned long millis()
 {
-    static auto start_time = std::chrono::system_clock::now();
-
-    auto end_time = std::chrono::system_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-
-    return static_cast<unsigned long>(duration.count());
+    return static_cast<unsigned long>(esp_timer_get_time() / 1000);
 }
 #endif
 
@@ -330,7 +327,7 @@ bool TinyGPSPlus::endOfTermHandler()
       break;
     case COMBINE(GPS_SENTENCE_RMC, 4): // N/S
     case COMBINE(GPS_SENTENCE_GGA, 3):
-      location.rawNewLatData.negative = term[0] == 'S';
+      location.staging.lat.negative = term[0] == 'S';
       break;
     case COMBINE(GPS_SENTENCE_RMC, 5): // Longitude
     case COMBINE(GPS_SENTENCE_GGA, 4):
@@ -338,7 +335,7 @@ bool TinyGPSPlus::endOfTermHandler()
       break;
     case COMBINE(GPS_SENTENCE_RMC, 6): // E/W
     case COMBINE(GPS_SENTENCE_GGA, 5):
-      location.rawNewLngData.negative = term[0] == 'W';
+      location.staging.lng.negative = term[0] == 'W';
       break;
     case COMBINE(GPS_SENTENCE_RMC, 7): // Speed (RMC)
       speed.set(termSv);
@@ -351,7 +348,7 @@ bool TinyGPSPlus::endOfTermHandler()
       break;
     case COMBINE(GPS_SENTENCE_GGA, 6): // Fix data (GGA)
       sentenceHasFix = term[0] > '0';
-      location.newFixQuality = (TinyGPSLocation::Quality)term[0];
+      location.staging.fixQuality = (TinyGPSLocation::Quality)term[0];
       break;
     case COMBINE(GPS_SENTENCE_GGA, 7): // Satellites used (GGA)
       satellitesUsedCount.set(termSv);
@@ -363,7 +360,7 @@ bool TinyGPSPlus::endOfTermHandler()
       altitude.set(termSv);
       break;
     case COMBINE(GPS_SENTENCE_RMC, 12):
-      location.newFixMode = (TinyGPSLocation::Mode)term[0];
+      location.staging.fixMode = (TinyGPSLocation::Mode)term[0];
       break;
     case COMBINE(GPS_SENTENCE_GGA, 11): // Height over Geoid
       geoidHeight.set(termSv);
@@ -483,133 +480,80 @@ std::string_view TinyGPSPlus::cardinal(double course)
   return directions[(int)((course + 11.25f) / 22.5f) % directions.size()];
 }
 
+double TinyGPSLocation::Data::latDeg() const
+{
+   const double ret = lat.deg + lat.billionths / 1000000000.0;
+   return lat.negative ? -ret : ret;
+}
+
+double TinyGPSLocation::Data::lngDeg() const
+{
+   const double ret = lng.deg + lng.billionths / 1000000000.0;
+   return lng.negative ? -ret : ret;
+}
+
 void TinyGPSLocation::commit()
 {
-   rawLatData = rawNewLatData;
-   rawLngData = rawNewLngData;
-   fixQuality = newFixQuality;
-   fixMode = newFixMode;
+   committed = staging;
    lastCommitTime = millis();
-   valid = updated = true;
 }
 
 void TinyGPSLocation::setLatitude(std::string_view term)
 {
-   TinyGPSPlus::parseDegrees(term, rawNewLatData);
+   TinyGPSPlus::parseDegrees(term, staging.lat);
 }
 
 void TinyGPSLocation::setLongitude(std::string_view term)
 {
-   TinyGPSPlus::parseDegrees(term, rawNewLngData);
-}
-
-double TinyGPSLocation::lat()
-{
-   updated = false;
-   double ret = rawLatData.deg + rawLatData.billionths / 1000000000.0;
-   return rawLatData.negative ? -ret : ret;
-}
-
-double TinyGPSLocation::lng()
-{
-   updated = false;
-   double ret = rawLngData.deg + rawLngData.billionths / 1000000000.0;
-   return rawLngData.negative ? -ret : ret;
+   TinyGPSPlus::parseDegrees(term, staging.lng);
 }
 
 void TinyGPSDate::commit()
 {
-   date = newDate;
+   committed = staging;
    lastCommitTime = millis();
-   valid = updated = true;
-}
-
-void TinyGPSTime::commit()
-{
-   time = newTime;
-   lastCommitTime = millis();
-   valid = updated = true;
-}
-
-void TinyGPSTime::setTime(std::string_view term)
-{
-   newTime = (uint32_t)TinyGPSPlus::parseDecimal(term);
 }
 
 void TinyGPSDate::setDate(std::string_view term)
 {
    uint32_t val = 0;
    std::from_chars(term.data(), term.data() + term.size(), val);
-   newDate = val;
+   staging = val;
 }
 
-uint16_t TinyGPSDate::year()
+void TinyGPSTime::commit()
 {
-   updated = false;
-   uint16_t year = date % 100;
-   return year + 2000;
+   committed = staging;
+   lastCommitTime = millis();
 }
 
-uint8_t TinyGPSDate::month()
+void TinyGPSTime::setTime(std::string_view term)
 {
-   updated = false;
-   return (date / 100) % 100;
-}
-
-uint8_t TinyGPSDate::day()
-{
-   updated = false;
-   return date / 10000;
-}
-
-uint8_t TinyGPSTime::hour()
-{
-   updated = false;
-   return time / 1000000;
-}
-
-uint8_t TinyGPSTime::minute()
-{
-   updated = false;
-   return (time / 10000) % 100;
-}
-
-uint8_t TinyGPSTime::second()
-{
-   updated = false;
-   return (time / 100) % 100;
-}
-
-uint8_t TinyGPSTime::centisecond()
-{
-   updated = false;
-   return time % 100;
+   staging = static_cast<uint32_t>(TinyGPSPlus::parseDecimal(term));
 }
 
 void TinyGPSDecimal::commit()
 {
-   val = newval;
+   committed = staging;
    lastCommitTime = millis();
-   valid = updated = true;
 }
 
 void TinyGPSDecimal::set(std::string_view term)
 {
-   newval = TinyGPSPlus::parseDecimal(term);
+   staging = TinyGPSPlus::parseDecimal(term);
 }
 
 void TinyGPSInteger::commit()
 {
-   val = newval;
+   committed = staging;
    lastCommitTime = millis();
-   valid = updated = true;
 }
 
 void TinyGPSInteger::set(std::string_view term)
 {
    uint32_t val = 0;
    std::from_chars(term.data(), term.data() + term.size(), val);
-   newval = val;
+   staging = val;
 }
 
 TinyGPSCustom::TinyGPSCustom(TinyGPSPlus &gps, std::string_view _sentenceName, int _termNumber)
@@ -665,39 +609,35 @@ void TinyGPSSatellites::beginGsaSentence(GnssSystemId derivedFromTalker)
 {
    stagingCount = 0;
    stagingSystemId = derivedFromTalker;
-   newMode    = GsaFixMode::Auto;
-   newFixType = GsaFixType::None;
-   newPdop    = 0;
-   newHdop    = 0;
-   newVdop    = 0;
+   staging = Scalars{};
 }
 
 void TinyGPSSatellites::setMode(std::string_view term)
 {
    if (!term.empty() && (term.front() == 'A' || term.front() == 'M'))
-      newMode = static_cast<GsaFixMode>(term.front());
+      staging.mode = static_cast<GsaFixMode>(term.front());
 }
 
 void TinyGPSSatellites::setFixType(std::string_view term)
 {
    uint8_t v = 0;
    if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{} && v >= 1 && v <= 3)
-      newFixType = static_cast<GsaFixType>(v);
+      staging.fixType = static_cast<GsaFixType>(v);
 }
 
 void TinyGPSSatellites::setPdop(std::string_view term)
 {
-   newPdop = TinyGPSPlus::parseDecimal(term);
+   staging.pdop = TinyGPSPlus::parseDecimal(term);
 }
 
 void TinyGPSSatellites::setHdop(std::string_view term)
 {
-   newHdop = TinyGPSPlus::parseDecimal(term);
+   staging.hdop = TinyGPSPlus::parseDecimal(term);
 }
 
 void TinyGPSSatellites::setVdop(std::string_view term)
 {
-   newVdop = TinyGPSPlus::parseDecimal(term);
+   staging.vdop = TinyGPSPlus::parseDecimal(term);
 }
 
 void TinyGPSSatellites::setGsaSystemId(std::string_view term)
@@ -730,15 +670,11 @@ void TinyGPSSatellites::appendGsaSatellite(std::string_view term)
 
 void TinyGPSSatellites::commitGsa()
 {
-   mode    = newMode;
-   fixType = newFixType;
-   pdop    = newPdop;
-   hdop    = newHdop;
-   vdop    = newVdop;
+   committed = staging;
 
    // Per-system snapshot: store under the constellation index. The Unknown
    // talker (GN with no System ID field) gets routed to the GPS slot as a
-   // best-effort fallback so its satellites still appear in inSolution()
+   // best-effort fallback so its satellites still appear in the union view
    // — pre-NMEA-4.10 GN sentences shouldn't be emitted by spec-compliant
    // receivers, and the UM980 does send the System ID field.
    const auto sysIdx = (stagingSystemId == GnssSystemId::Unknown)
@@ -766,8 +702,6 @@ void TinyGPSSatellites::commitGsa()
 
    rebuildFlatList();
    lastCommitTime = millis();
-   valid = true;
-   updated = true;
 }
 
 void TinyGPSSatellites::rebuildFlatList()
@@ -780,4 +714,20 @@ void TinyGPSSatellites::rebuildFlatList()
       for (std::size_t i = 0; i < slot.count && flatCount < flatList.size(); ++i)
          flatList[flatCount++] = slot.sats[i];
    }
+}
+
+std::optional<TinyGPSSatellites::Data> TinyGPSSatellites::consume()
+{
+   if (!committed)
+      return std::nullopt;
+   Data out;
+   out.mode = committed->mode;
+   out.fixType = committed->fixType;
+   out.pdop = committed->pdop;
+   out.hdop = committed->hdop;
+   out.vdop = committed->vdop;
+   std::copy_n(flatList.begin(), flatCount, out.inSolution.begin());
+   out.inSolutionCount = flatCount;
+   committed.reset();
+   return out;
 }

@@ -101,150 +101,369 @@ struct TinyGPSSatellite
    bool                   inSolution   = false;  // set true by GSA
 };
 
-struct TinyGPSLocation
+class TinyGPSLocation
 {
    friend class TinyGPSPlus;
 public:
    enum Quality { Invalid = '0', GPS = '1', DGPS = '2', PPS = '3', RTK = '4', FloatRTK = '5', Estimated = '6', Manual = '7', Simulated = '8' };
    enum Mode { N = 'N', A = 'A', D = 'D', E = 'E'};
 
-   bool isValid() const    { return valid; }
-   bool isUpdated() const  { return updated; }
-   uint32_t age() const    { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
-   const RawDegrees &rawLat()     { updated = false; return rawLatData; }
-   const RawDegrees &rawLng()     { updated = false; return rawLngData; }
-   double lat();
-   double lng();
-   Quality FixQuality()           { updated = false; return fixQuality; }
-   Mode FixMode()                 { updated = false; return fixMode; }
+   struct Data
+   {
+      RawDegrees lat{};
+      RawDegrees lng{};
+      Quality    fixQuality = Invalid;
+      Mode       fixMode    = N;
 
-   TinyGPSLocation() : valid(false), updated(false), fixQuality(Invalid), fixMode(N)
-   {}
+      double latDeg() const;
+      double lngDeg() const;
+   };
+
+   bool isUpdated() const
+   {
+      return committed.has_value();
+   }
+
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   std::optional<Data> consume()
+   {
+      if (!committed)
+         return std::nullopt;
+      Data out = std::move(*committed);
+      committed.reset();
+      return out;
+   }
+
+   TinyGPSLocation() = default;
 
 private:
-   bool valid, updated;
-   RawDegrees rawLatData, rawLngData, rawNewLatData, rawNewLngData;
-   Quality fixQuality, newFixQuality;
-   Mode fixMode, newFixMode;
-   uint32_t lastCommitTime;
+   uint32_t lastCommitTime = 0;
+   Data staging;
+   std::optional<Data> committed;
+
    void commit();
    void setLatitude(std::string_view term);
    void setLongitude(std::string_view term);
 };
 
-struct TinyGPSDate
+class TinyGPSDate
 {
    friend class TinyGPSPlus;
 public:
-   bool isValid() const       { return valid; }
-   bool isUpdated() const     { return updated; }
-   uint32_t age() const       { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
+   struct Data
+   {
+      uint32_t raw = 0; // DDMMYY packed
 
-   uint32_t value()           { updated = false; return date; }
-   uint16_t year();
-   uint8_t month();
-   uint8_t day();
+      uint16_t year() const
+      {
+         return raw % 100 + 2000;
+      }
 
-   TinyGPSDate() : valid(false), updated(false), date(0)
-   {}
+      uint8_t month() const
+      {
+         return (raw / 100) % 100;
+      }
+
+      uint8_t day() const
+      {
+         return raw / 10000;
+      }
+   };
+
+   bool isUpdated() const
+   {
+      return committed.has_value();
+   }
+
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   std::optional<Data> consume()
+   {
+      if (!committed)
+         return std::nullopt;
+      Data out{ *committed };
+      committed.reset();
+      return out;
+   }
+
+   TinyGPSDate() = default;
 
 private:
-   bool valid, updated;
-   uint32_t date, newDate;
-   uint32_t lastCommitTime;
+   uint32_t staging = 0;
+   std::optional<uint32_t> committed;
+   uint32_t lastCommitTime = 0;
+
    void commit();
    void setDate(std::string_view term);
 };
 
-struct TinyGPSTime
+class TinyGPSTime
 {
    friend class TinyGPSPlus;
 public:
-   bool isValid() const       { return valid; }
-   bool isUpdated() const     { return updated; }
-   uint32_t age() const       { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
+   struct Data
+   {
+      uint32_t raw = 0; // HHMMSSCC packed
 
-   uint32_t value()           { updated = false; return time; }
-   uint8_t hour();
-   uint8_t minute();
-   uint8_t second();
-   uint8_t centisecond();
+      uint8_t hour() const
+      {
+         return raw / 1000000;
+      }
 
-   TinyGPSTime() : valid(false), updated(false), time(0)
-   {}
+      uint8_t minute() const
+      {
+         return (raw / 10000) % 100;
+      }
+
+      uint8_t second() const
+      {
+         return (raw / 100) % 100;
+      }
+
+      uint8_t centisecond() const
+      {
+         return raw % 100;
+      }
+   };
+
+   bool isUpdated() const
+   {
+      return committed.has_value();
+   }
+
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   std::optional<Data> consume()
+   {
+      if (!committed)
+         return std::nullopt;
+      Data out{ *committed };
+      committed.reset();
+      return out;
+   }
+
+   TinyGPSTime() = default;
 
 private:
-   bool valid, updated;
-   uint32_t time, newTime;
-   uint32_t lastCommitTime;
+   uint32_t staging = 0;
+   std::optional<uint32_t> committed;
+   uint32_t lastCommitTime = 0;
+
    void commit();
    void setTime(std::string_view term);
 };
 
-struct TinyGPSDecimal
+class TinyGPSDecimal
 {
    friend class TinyGPSPlus;
 public:
-   bool isValid() const    { return valid; }
-   bool isUpdated() const  { return updated; }
-   uint32_t age() const    { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
-   int32_t value()         { updated = false; return val; }
+   bool isUpdated() const
+   {
+      return committed.has_value();
+   }
 
-   TinyGPSDecimal() : valid(false), updated(false), val(0)
-   {}
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   TinyGPSDecimal() = default;
+
+protected:
+   /// Take ownership of the committed int. Returns nullopt if no fresh commit.
+   std::optional<int32_t> consumeRaw()
+   {
+      if (!committed)
+         return std::nullopt;
+      int32_t out = *committed;
+      committed.reset();
+      return out;
+   }
+
+   void set(std::string_view term);
+   void commit();
 
 private:
-   bool valid, updated;
-   uint32_t lastCommitTime;
-   int32_t val, newval;
+   int32_t staging = 0;
+   std::optional<int32_t> committed;
+   uint32_t lastCommitTime = 0;
+};
+
+class TinyGPSInteger
+{
+   friend class TinyGPSPlus;
+public:
+   struct Data
+   {
+      uint32_t raw = 0;
+   };
+
+   bool isUpdated() const
+   {
+      return committed.has_value();
+   }
+
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   std::optional<Data> consume()
+   {
+      if (!committed)
+         return std::nullopt;
+      Data out{ *committed };
+      committed.reset();
+      return out;
+   }
+
+   TinyGPSInteger() = default;
+
+private:
+   uint32_t staging = 0;
+   std::optional<uint32_t> committed;
+   uint32_t lastCommitTime = 0;
+
    void commit();
    void set(std::string_view term);
 };
 
-struct TinyGPSInteger
+class TinyGPSSpeed : public TinyGPSDecimal
 {
-   friend class TinyGPSPlus;
 public:
-   bool isValid() const    { return valid; }
-   bool isUpdated() const  { return updated; }
-   uint32_t age() const    { return valid ? millis() - lastCommitTime : (uint32_t)ULONG_MAX; }
-   uint32_t value()        { updated = false; return val; }
+   struct Data
+   {
+      int32_t raw = 0;
 
-   TinyGPSInteger() : valid(false), updated(false), val(0)
-   {}
+      double knots() const
+      {
+         return raw / 100.0;
+      }
 
-private:
-   bool valid, updated;
-   uint32_t lastCommitTime;
-   uint32_t val, newval;
-   void commit();
-   void set(std::string_view term);
+      double mph() const
+      {
+         return _GPS_MPH_PER_KNOT * raw / 100.0;
+      }
+
+      double mps() const
+      {
+         return _GPS_MPS_PER_KNOT * raw / 100.0;
+      }
+
+      double kmph() const
+      {
+         return _GPS_KMPH_PER_KNOT * raw / 100.0;
+      }
+   };
+
+   std::optional<Data> consume()
+   {
+      auto raw = consumeRaw();
+      if (!raw)
+         return std::nullopt;
+      return Data{ *raw };
+   }
 };
 
-struct TinyGPSSpeed : TinyGPSDecimal
+class TinyGPSCourse : public TinyGPSDecimal
 {
-   double knots()    { return value() / 100.0; }
-   double mph()      { return _GPS_MPH_PER_KNOT * value() / 100.0; }
-   double mps()      { return _GPS_MPS_PER_KNOT * value() / 100.0; }
-   double kmph()     { return _GPS_KMPH_PER_KNOT * value() / 100.0; }
+public:
+   struct Data
+   {
+      int32_t raw = 0;
+
+      double deg() const
+      {
+         return raw / 100.0;
+      }
+   };
+
+   std::optional<Data> consume()
+   {
+      auto raw = consumeRaw();
+      if (!raw)
+         return std::nullopt;
+      return Data{ *raw };
+   }
 };
 
-struct TinyGPSCourse : public TinyGPSDecimal
+class TinyGPSAltitude : public TinyGPSDecimal
 {
-   double deg()      { return value() / 100.0; }
+public:
+   struct Data
+   {
+      int32_t raw = 0;
+
+      double meters() const
+      {
+         return raw / 100.0;
+      }
+
+      double miles() const
+      {
+         return _GPS_MILES_PER_METER * raw / 100.0;
+      }
+
+      double kilometers() const
+      {
+         return _GPS_KM_PER_METER * raw / 100.0;
+      }
+
+      double feet() const
+      {
+         return _GPS_FEET_PER_METER * raw / 100.0;
+      }
+   };
+
+   std::optional<Data> consume()
+   {
+      auto raw = consumeRaw();
+      if (!raw)
+         return std::nullopt;
+      return Data{ *raw };
+   }
 };
 
-struct TinyGPSAltitude : TinyGPSDecimal
+class TinyGPSHDOP : public TinyGPSDecimal
 {
-   double meters()       { return value() / 100.0; }
-   double miles()        { return _GPS_MILES_PER_METER * value() / 100.0; }
-   double kilometers()   { return _GPS_KM_PER_METER * value() / 100.0; }
-   double feet()         { return _GPS_FEET_PER_METER * value() / 100.0; }
-};
+public:
+   struct Data
+   {
+      int32_t raw = 0;
 
-struct TinyGPSHDOP : TinyGPSDecimal
-{
-   double hdop() { return value() / 100.0; }
+      double hdop() const
+      {
+         return raw / 100.0;
+      }
+   };
+
+   std::optional<Data> consume()
+   {
+      auto raw = consumeRaw();
+      if (!raw)
+         return std::nullopt;
+      return Data{ *raw };
+   }
 };
 
 /// Holds the active-solution satellite list and the scalar quality fields from
@@ -260,30 +479,51 @@ public:
    static constexpr std::size_t NumKnownSystems = 5;        // GPS..QZSS in GnssSystemId
    static constexpr std::size_t MaxTotalSatellites = NumKnownSystems * MaxPerSystem;
 
-   bool isValid() const   { return valid; }
-   bool isUpdated() const { return updated; }
-   uint32_t age() const   { return valid ? millis() - lastCommitTime : static_cast<uint32_t>(ULONG_MAX); }
-
-   // PascalCase to disambiguate from the same-named private members, following
-   // the FixMode()/FixQuality() pattern in TinyGPSLocation.
-   GsaFixMode Mode()    { updated = false; return mode; }
-   GsaFixType FixType() { updated = false; return fixType; }
-
-   int32_t pdopRaw() { updated = false; return pdop; }
-   int32_t hdopRaw() { updated = false; return hdop; }
-   int32_t vdopRaw() { updated = false; return vdop; }
-
-   /// Union of satellites currently in solution across all known constellations.
-   std::span<const TinyGPSSatellite> inSolution()
+   struct Data
    {
-      updated = false;
-      return std::span<const TinyGPSSatellite>(flatList.data(), flatCount);
+      GsaFixMode mode    = GsaFixMode::Auto;
+      GsaFixType fixType = GsaFixType::None;
+      int32_t    pdop    = 0;
+      int32_t    hdop    = 0;
+      int32_t    vdop    = 0;
+
+      /// Satellites in solution, owned by this snapshot (up to 5 systems × 12).
+      std::array<TinyGPSSatellite, MaxTotalSatellites> inSolution{};
+      std::size_t inSolutionCount = 0;
+
+      /// Trimmed view; valid for this Data's lifetime.
+      std::span<const TinyGPSSatellite> satellites() const
+      {
+         return std::span<const TinyGPSSatellite>(inSolution.data(), inSolutionCount);
+      }
+   };
+
+   bool isUpdated() const
+   {
+      return committed.has_value();
    }
-   std::size_t inSolutionCount() const { return flatCount; }
+
+   uint32_t age() const
+   {
+      if (lastCommitTime == 0)
+         return static_cast<uint32_t>(ULONG_MAX);
+      return millis() - lastCommitTime;
+   }
+
+   std::optional<Data> consume();
 
    TinyGPSSatellites() = default;
 
 private:
+   struct Scalars
+   {
+      GsaFixMode mode    = GsaFixMode::Auto;
+      GsaFixType fixType = GsaFixType::None;
+      int32_t    pdop    = 0;
+      int32_t    hdop    = 0;
+      int32_t    vdop    = 0;
+   };
+
    struct PerSystem
    {
       std::array<TinyGPSSatellite, MaxPerSystem> sats{};
@@ -292,21 +532,10 @@ private:
       bool valid = false;
    };
 
-   bool valid = false;
-   bool updated = false;
    uint32_t lastCommitTime = 0;
 
-   GsaFixMode mode    = GsaFixMode::Auto;
-   GsaFixType fixType = GsaFixType::None;
-   int32_t    pdop    = 0;
-   int32_t    hdop    = 0;
-   int32_t    vdop    = 0;
-
-   GsaFixMode newMode    = GsaFixMode::Auto;
-   GsaFixType newFixType = GsaFixType::None;
-   int32_t    newPdop    = 0;
-   int32_t    newHdop    = 0;
-   int32_t    newVdop    = 0;
+   Scalars staging;
+   std::optional<Scalars> committed;
 
    std::array<TinyGPSSatellite, MaxPerSystem> stagingList{};
    std::size_t stagingCount = 0;

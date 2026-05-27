@@ -4,6 +4,8 @@ idf_component_register(
     "src/unicore.cpp"
   INCLUDE_DIRS
     "src"
+  REQUIRES
+    esp_timer
 )
 
 set_property(TARGET ${COMPONENT_LIB} PROPERTY CXX_STANDARD 26)
