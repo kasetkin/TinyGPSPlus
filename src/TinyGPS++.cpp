@@ -38,8 +38,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 static constexpr std::string_view RMC_TERM{"RMC"};
 static constexpr std::string_view GGA_TERM{"GGA"};
 static constexpr std::string_view GSA_TERM{"GSA"};
+static constexpr std::string_view GSV_TERM{"GSV"};
 
-static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABL"}; // GP, GN, GA, GB, GL
+static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABLQ"}; // GP, GN, GA, GB, GL, GQ
 
 /// Map the second character of an NMEA talker ID (the suffix after 'G') to the
 /// GNSS constellation it identifies. Used when a GSA sentence omits the
@@ -275,6 +276,9 @@ bool TinyGPSPlus::endOfTermHandler()
       case SentenceType::GSA:
         satellites.commitGsa();
         break;
+      case SentenceType::GSV:
+        satellites.commitGsv();
+        break;
       case SentenceType::Other:
         break;
       }
@@ -304,6 +308,11 @@ bool TinyGPSPlus::endOfTermHandler()
     {
       curSentenceType = SentenceType::GSA;
       satellites.beginGsaSentence(suffixToSystemId(term[1]));
+    }
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == GSV_TERM)
+    {
+      curSentenceType = SentenceType::GSV;
+      satellites.beginGsvSentence(suffixToSystemId(term[1]));
     }
     else
       curSentenceType = SentenceType::Other;
@@ -401,6 +410,34 @@ bool TinyGPSPlus::endOfTermHandler()
       break;
     case combine(SentenceType::GSA, 18): // System ID (NMEA 0183 4.10)
       satellites.setGsaSystemId(termSv);
+      break;
+    case combine(SentenceType::GSV, 1): // Total number of GSV sentences in this group
+      satellites.setGsvTotalMessages(termSv);
+      break;
+    case combine(SentenceType::GSV, 2): // This sentence's number within the group
+      satellites.setGsvMessageNumber(termSv);
+      break;
+    case combine(SentenceType::GSV, 3): // Total satellites in view
+      satellites.setGsvTotalInView(termSv);
+      break;
+    case combine(SentenceType::GSV, 4):  // Up to four {PRN, elevation, azimuth, SNR}
+    case combine(SentenceType::GSV, 5):  // quads, optionally followed by a Signal ID
+    case combine(SentenceType::GSV, 6):  // (NMEA >=4.10). Empty fields are skipped by
+    case combine(SentenceType::GSV, 7):  // the `term[0]` guard above; the Signal ID's
+    case combine(SentenceType::GSV, 8):  // varying position is resolved in commitGsv().
+    case combine(SentenceType::GSV, 9):
+    case combine(SentenceType::GSV, 10):
+    case combine(SentenceType::GSV, 11):
+    case combine(SentenceType::GSV, 12):
+    case combine(SentenceType::GSV, 13):
+    case combine(SentenceType::GSV, 14):
+    case combine(SentenceType::GSV, 15):
+    case combine(SentenceType::GSV, 16):
+    case combine(SentenceType::GSV, 17):
+    case combine(SentenceType::GSV, 18):
+    case combine(SentenceType::GSV, 19):
+    case combine(SentenceType::GSV, 20):
+      satellites.setGsvField(curTermNumber, termSv);
       break;
   }
 
@@ -721,18 +758,204 @@ void TinyGPSSatellites::rebuildFlatList()
    }
 }
 
+//
+// TinyGPSSatellites — native parsing of $--GSV sentences (satellites in view)
+//
+
+void TinyGPSSatellites::beginGsvSentence(GnssSystemId derivedFromTalker)
+{
+   gsvStagingSystemId = derivedFromTalker;
+   gsvFieldVal.fill(0);
+   gsvFieldHas.fill(false);
+   gsvMaxFieldIdx = -1;
+}
+
+void TinyGPSSatellites::setGsvTotalMessages(std::string_view term)
+{
+   uint8_t v = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{})
+      gsvTotalMessages = v;
+}
+
+void TinyGPSSatellites::setGsvMessageNumber(std::string_view term)
+{
+   uint8_t v = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{})
+      gsvMessageNumber = v;
+}
+
+void TinyGPSSatellites::setGsvTotalInView(std::string_view term)
+{
+   uint8_t v = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{})
+      gsvTotalInView = v;
+}
+
+// Capture one trailing GSV field (terms 4..20) by position; index = termNumber-4.
+// Empty fields never reach here (skipped by the term[0] guard upstream), so any
+// present entry is a real value. The Signal ID's varying position is resolved later.
+void TinyGPSSatellites::setGsvField(uint8_t termNumber, std::string_view term)
+{
+   const unsigned idx = termNumber - 4u;
+   if (idx >= gsvFieldVal.size())
+      return;
+   int16_t value = 0;
+   if (std::from_chars(term.data(), term.data() + term.size(), value).ec == std::errc{})
+   {
+      gsvFieldVal[idx] = value;
+      gsvFieldHas[idx] = true;
+   }
+   // Track extent even when the value didn't parse so the Signal ID position
+   // (always the last field) is still located correctly at commit time.
+   if (static_cast<int>(idx) > gsvMaxFieldIdx)
+      gsvMaxFieldIdx = static_cast<int>(idx);
+}
+
+void TinyGPSSatellites::commitGsv()
+{
+   // Resolve the trailing-field layout. K data fields follow term 3; NMEA >=4.10
+   // appends one non-null Signal ID after the satellite blocks, so a count one
+   // past a multiple of four (K % 4 == 1) means the last field is that ID.
+   const int K = gsvMaxFieldIdx + 1;
+   const bool hasSignalId = (K % 4) == 1;
+   const int satFieldCount = hasSignalId ? K - 1 : K;
+   const int numSats = (satFieldCount + 3) / 4;   // round up over trailing empties
+   const int sigId = (hasSignalId && gsvFieldHas[K - 1]) ? gsvFieldVal[K - 1] : -1;
+
+   // msgNum == 1 begins a new signal-group sequence: reset the accumulator.
+   if (gsvMessageNumber == 1)
+   {
+      gsvStagingList.fill(TinyGPSSatellite{});
+      gsvStagingCount = 0;
+   }
+
+   // Fold this (checksum-passed) sentence's satellites into the sequence.
+   for (int i = 0; i < numSats; ++i)
+   {
+      const int base = 4 * i;
+      if (!gsvFieldHas[base])                     // no PRN -> empty/unused block
+         continue;
+      const int16_t prn = gsvFieldVal[base];
+      if (prn <= 0 || prn > 255)
+         continue;
+      if (gsvStagingCount >= gsvStagingList.size())
+         break;
+      TinyGPSSatellite sat{};
+      sat.prn = static_cast<uint8_t>(prn);
+      sat.systemId = gsvStagingSystemId;
+      if (gsvFieldHas[base + 1]) sat.elevationDeg = gsvFieldVal[base + 1];
+      if (gsvFieldHas[base + 2]) sat.azimuthDeg   = gsvFieldVal[base + 2];
+      if (gsvFieldHas[base + 3]) sat.cn0DbHz      = gsvFieldVal[base + 3];
+      gsvStagingList[gsvStagingCount++] = sat;
+   }
+
+   // Not the last sentence of the group yet — wait for the remaining sentences.
+   if (gsvMessageNumber == 0 || gsvMessageNumber < gsvTotalMessages)
+      return;
+
+   // Whole signal group received: merge it into the per-system in-view list. GN
+   // (Unknown) is forbidden for GSV by spec; route it to the GPS slot as a
+   // best-effort fallback, matching commitGsa().
+   const std::size_t sysIdx = (gsvStagingSystemId == GnssSystemId::Unknown)
+        ? static_cast<std::size_t>(GnssSystemId::GPS) - 1
+        : static_cast<std::size_t>(gsvStagingSystemId) - 1;
+   if (sysIdx >= NumKnownSystems)
+      return;
+   const GnssSystemId committedSystemId = (gsvStagingSystemId == GnssSystemId::Unknown)
+        ? GnssSystemId::GPS
+        : gsvStagingSystemId;
+
+   PerSystemInView& slot = inViewBySystem[sysIdx];
+
+   // New epoch for this constellation? Signal IDs within one epoch are emitted in
+   // non-decreasing order and restart (<= last) at the next epoch. An absent
+   // Signal ID (sigId < 0) means single-signal output: always replace.
+   const bool newEpoch = sigId < 0 || sigId <= slot.lastSignalId;
+   if (newEpoch)
+   {
+      slot.sats.fill(TinyGPSSatellite{});
+      slot.count = 0;
+   }
+
+   // Merge the sequence, deduping per PRN and keeping the strongest C/N0
+   // (an absent C/N0 counts as the weakest).
+   for (std::size_t i = 0; i < gsvStagingCount; ++i)
+   {
+      TinyGPSSatellite sat = gsvStagingList[i];
+      sat.systemId = committedSystemId;
+
+      bool merged = false;
+      for (std::size_t j = 0; j < slot.count; ++j)
+      {
+         if (slot.sats[j].prn != sat.prn)
+            continue;
+         const int existing = slot.sats[j].cn0DbHz.value_or(INT16_MIN);
+         const int incoming = sat.cn0DbHz.value_or(INT16_MIN);
+         if (incoming > existing)
+            slot.sats[j] = sat;
+         merged = true;
+         break;
+      }
+      if (!merged && slot.count < slot.sats.size())
+         slot.sats[slot.count++] = sat;
+   }
+
+   slot.valid = true;
+   slot.lastSignalId = sigId;
+   slot.lastCommitTime = millis();
+
+   gsvLastCommitTime = millis();
+   gsvFresh = true;
+}
+
 std::optional<TinyGPSSatellites::Data> TinyGPSSatellites::consume()
 {
-   if (!committed)
+   if (!isGsaUpdated() && !isInViewUpdated())
       return std::nullopt;
+
    Data out;
-   out.mode = committed->mode;
-   out.fixType = committed->fixType;
-   out.pdop = committed->pdop;
-   out.hdop = committed->hdop;
-   out.vdop = committed->vdop;
+
+   // GSA-derived scalars + in-solution list (defaults if no GSA has committed).
+   if (committed)
+   {
+      out.mode = committed->mode;
+      out.fixType = committed->fixType;
+      out.pdop = committed->pdop;
+      out.hdop = committed->hdop;
+      out.vdop = committed->vdop;
+   }
    std::copy_n(flatList.begin(), flatCount, out.inSolution.begin());
    out.inSolutionCount = flatCount;
+
+   // GSV-derived in-view list: flatten the per-system committed lists on demand.
+   out.inViewCount = 0;
+   for (const PerSystemInView& slot : inViewBySystem)
+   {
+      if (!slot.valid)
+         continue;
+      for (std::size_t i = 0; i < slot.count && out.inViewCount < out.inViewArr.size(); ++i)
+         out.inViewArr[out.inViewCount++] = slot.sats[i];
+   }
+
+   // Join by (systemId, prn): enrich the in-solution entries with elevation /
+   // azimuth / C/N0 from GSV, and flag the in-view entries that are in solution.
+   for (std::size_t i = 0; i < out.inViewCount; ++i)
+   {
+      TinyGPSSatellite& v = out.inViewArr[i];
+      for (std::size_t k = 0; k < out.inSolutionCount; ++k)
+      {
+         TinyGPSSatellite& s = out.inSolution[k];
+         if (s.systemId != v.systemId || s.prn != v.prn)
+            continue;
+         v.inSolution   = true;
+         s.elevationDeg = v.elevationDeg;
+         s.azimuthDeg   = v.azimuthDeg;
+         s.cn0DbHz      = v.cn0DbHz;
+         break;
+      }
+   }
+
    committed.reset();
+   gsvFresh = false;
    return out;
 }

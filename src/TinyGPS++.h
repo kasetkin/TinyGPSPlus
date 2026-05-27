@@ -484,11 +484,17 @@ public:
    }
 };
 
-/// Holds the active-solution satellite list and the scalar quality fields from
-/// $--GSA sentences. Multi-constellation receivers (GN talker) emit one GSA per
-/// constellation per epoch; this class accumulates them keyed by SystemID so
-/// inSolution() returns the union across all constellations.
-/// Future GSV parsing will fill TinyGPSSatellite::elevationDeg/azimuthDeg/cn0DbHz.
+/// Holds the satellite picture assembled from two NMEA sources:
+///  - $--GSA gives the active-solution PRNs plus the scalar quality fields
+///    (mode / fix type / PDOP / HDOP / VDOP). Multi-constellation receivers (GN
+///    talker) emit one GSA per constellation per epoch; they are accumulated
+///    keyed by SystemID so the in-solution list is the union across systems.
+///  - $--GSV gives every satellite in view with elevation / azimuth / C/N0. GSV
+///    spans multiple sentences per constellation and (NMEA >=4.10) repeats a PRN
+///    once per signal; entries are deduped per (system, PRN) keeping the strongest
+///    C/N0. The in-view data fills TinyGPSSatellite::elevationDeg/azimuthDeg/cn0DbHz
+///    and, where a PRN is also in solution, enriches the matching in-solution entry.
+/// isUpdated() is fresh only when BOTH a GSA and a GSV cycle have committed.
 class TinyGPSSatellites
 {
    friend class TinyGPSPlus;
@@ -496,6 +502,8 @@ public:
    static constexpr std::size_t MaxPerSystem = 12;          // satellite slots per GSA
    static constexpr std::size_t NumKnownSystems = 5;        // GPS..QZSS in GnssSystemId
    static constexpr std::size_t MaxTotalSatellites = NumKnownSystems * MaxPerSystem;
+   static constexpr std::size_t MaxInViewPerSystem = 20;    // satellite slots per GSV constellation
+   static constexpr std::size_t MaxTotalInView = NumKnownSystems * MaxInViewPerSystem;
 
    struct Data
    {
@@ -509,23 +517,49 @@ public:
       std::array<TinyGPSSatellite, MaxTotalSatellites> inSolution{};
       std::size_t inSolutionCount = 0;
 
-      /// Trimmed view; valid for this Data's lifetime.
+      /// Satellites in view from $--GSV (superset of the in-solution list); each
+      /// carries elevation/azimuth/C/N0 and an inSolution flag. Owned by this snapshot.
+      std::array<TinyGPSSatellite, MaxTotalInView> inViewArr{};
+      std::size_t inViewCount = 0;
+
+      /// Trimmed in-solution view; valid for this Data's lifetime.
       std::span<const TinyGPSSatellite> satellites() const
       {
          return std::span<const TinyGPSSatellite>(inSolution.data(), inSolutionCount);
       }
+
+      /// Trimmed in-view view; valid for this Data's lifetime.
+      std::span<const TinyGPSSatellite> inView() const
+      {
+         return std::span<const TinyGPSSatellite>(inViewArr.data(), inViewCount);
+      }
    };
 
+   /// Fresh only when BOTH a GSA and a GSV cycle have committed since the last
+   /// consume(), i.e. a complete in-solution + in-view + enriched snapshot is ready.
    bool isUpdated() const
+   {
+      return isGsaUpdated() && isInViewUpdated();
+   }
+
+   /// Per-source freshness, so each NMEA stream stays observable in isolation.
+   bool isGsaUpdated() const
    {
       return committed.has_value();
    }
 
+   bool isInViewUpdated() const
+   {
+      return gsvFresh;
+   }
+
+   /// Age of the most-recent of the GSA / GSV commits.
    uint32_t age() const
    {
-      if (lastCommitTime == 0)
+      const uint32_t newest = lastCommitTime > gsvLastCommitTime ? lastCommitTime : gsvLastCommitTime;
+      if (newest == 0)
          return static_cast<uint32_t>(ULONG_MAX);
-      return millis() - lastCommitTime;
+      return millis() - newest;
    }
 
    std::optional<Data> consume();
@@ -564,6 +598,37 @@ private:
    std::array<TinyGPSSatellite, MaxTotalSatellites> flatList{};
    std::size_t flatCount = 0;
 
+   // ── GSV (satellites in view) ────────────────────────────────────────────
+   struct PerSystemInView
+   {
+      std::array<TinyGPSSatellite, MaxInViewPerSystem> sats{};
+      std::size_t count = 0;
+      uint32_t lastCommitTime = 0;
+      bool valid = false;
+      int lastSignalId = -1;   // NMEA >=4.10 signal ID of the last merged group
+   };
+
+   // Trailing fields (terms 4..20) of the GSV sentence being decoded; index is
+   // termNumber-4. Up to four {PRN, elevation, azimuth, SNR} quads, optionally
+   // followed by a Signal ID (NMEA >=4.10). The Signal ID's position varies with
+   // the satellite count, so it is located at commit time from the field count.
+   std::array<int16_t, 17> gsvFieldVal{};
+   std::array<bool, 17>    gsvFieldHas{};
+   int gsvMaxFieldIdx = -1;
+
+   // one signal group, accumulated across its msgNum 1..totalMessages sentences
+   std::array<TinyGPSSatellite, MaxInViewPerSystem> gsvStagingList{};
+   std::size_t gsvStagingCount = 0;
+   GnssSystemId gsvStagingSystemId = GnssSystemId::Unknown;
+   uint8_t gsvTotalMessages = 0;
+   uint8_t gsvMessageNumber = 0;
+   uint8_t gsvTotalInView = 0;
+
+   std::array<PerSystemInView, NumKnownSystems> inViewBySystem{};
+
+   bool gsvFresh = false;
+   uint32_t gsvLastCommitTime = 0;
+
    void beginGsaSentence(GnssSystemId derivedFromTalker);
    void setMode(std::string_view term);
    void setFixType(std::string_view term);
@@ -574,6 +639,13 @@ private:
    void appendGsaSatellite(std::string_view term);
    void commitGsa();
    void rebuildFlatList();
+
+   void beginGsvSentence(GnssSystemId derivedFromTalker);
+   void setGsvTotalMessages(std::string_view term);
+   void setGsvMessageNumber(std::string_view term);
+   void setGsvTotalInView(std::string_view term);
+   void setGsvField(uint8_t termNumber, std::string_view term);
+   void commitGsv();
 };
 
 class TinyGPSPlus;
@@ -642,6 +714,7 @@ public:
      GGA,
      RMC,
      GSA,
+     GSV,
      Other,
   };
   SentenceType sentenceType()  const { return curSentenceType; }
