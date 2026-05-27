@@ -35,9 +35,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "unicore.h"
 
-#define _RMCterm "RMC"
-#define _GGAterm "GGA"
-#define _GSAterm "GSA"
+static constexpr std::string_view RMC_TERM{"RMC"};
+static constexpr std::string_view GGA_TERM{"GGA"};
+static constexpr std::string_view GSA_TERM{"GSA"};
 
 static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABL"}; // GP, GN, GA, GB, GL
 
@@ -73,7 +73,7 @@ unsigned long millis()
 TinyGPSPlus::TinyGPSPlus()
   :  parity(0)
   ,  isChecksumTerm(false)
-  ,  curSentenceType(GPS_SENTENCE_OTHER)
+  ,  curSentenceType(SentenceType::Other)
   ,  curTermNumber(0)
   ,  curTermOffset(0)
   ,  sentenceHasFix(false)
@@ -127,7 +127,7 @@ bool TinyGPSPlus::encode(char c)
     sentenceChecksumCharsSize = c == '#' ? 8 : 2;
     curTermNumber = curTermOffset = 0;
     parity = 0;
-    curSentenceType = GPS_SENTENCE_OTHER;
+    curSentenceType = SentenceType::Other;
     isChecksumTerm = false;
     sentenceHasFix = false;
     return false;
@@ -215,7 +215,10 @@ void TinyGPSPlus::parseDegrees(std::string_view term, RawDegrees &deg)
   deg.negative = false;
 }
 
-#define COMBINE(sentence_type, term_number) (((unsigned)(sentence_type) << 5) | term_number)
+constexpr unsigned TinyGPSPlus::combine(SentenceType sentenceType, unsigned termNumber) noexcept
+{
+   return (static_cast<unsigned>(sentenceType) << 5) | termNumber;
+}
 
 // Processes a just-completed term
 // Returns true if new sentence has just passed checksum test and is validated
@@ -248,7 +251,7 @@ bool TinyGPSPlus::endOfTermHandler()
 
       switch(curSentenceType)
       {
-      case GPS_SENTENCE_RMC:
+      case SentenceType::RMC:
         date.commit();
         time.commit();
         if (sentenceHasFix)
@@ -258,7 +261,7 @@ bool TinyGPSPlus::endOfTermHandler()
            course.commit();
         }
         break;
-      case GPS_SENTENCE_GGA:
+      case SentenceType::GGA:
         time.commit();
         if (sentenceHasFix)
         {
@@ -269,8 +272,10 @@ bool TinyGPSPlus::endOfTermHandler()
         satellitesUsedCount.commit();
         hdop.commit();
         break;
-      case GPS_SENTENCE_GSA:
+      case SentenceType::GSA:
         satellites.commitGsa();
+        break;
+      case SentenceType::Other:
         break;
       }
 
@@ -291,17 +296,17 @@ bool TinyGPSPlus::endOfTermHandler()
   // the first term determines the sentence type
   if (curTermNumber == 0)
   {
-    if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == _RMCterm)
-      curSentenceType = GPS_SENTENCE_RMC;
-    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == _GGAterm)
-      curSentenceType = GPS_SENTENCE_GGA;
-    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == _GSAterm)
+    if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == RMC_TERM)
+      curSentenceType = SentenceType::RMC;
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == GGA_TERM)
+      curSentenceType = SentenceType::GGA;
+    else if (term[0] == 'G' && std::ranges::contains(GNSS_TALKER_SUFFIXES, term[1]) && std::string_view(term.data() + 2) == GSA_TERM)
     {
-      curSentenceType = GPS_SENTENCE_GSA;
+      curSentenceType = SentenceType::GSA;
       satellites.beginGsaSentence(suffixToSystemId(term[1]));
     }
     else
-      curSentenceType = GPS_SENTENCE_OTHER;
+      curSentenceType = SentenceType::Other;
 
     // Any custom candidates of this sentence type?
     for (customCandidates = customElts; customCandidates != NULL && customCandidates->sentenceName < termSv; customCandidates = customCandidates->next);
@@ -311,90 +316,90 @@ bool TinyGPSPlus::endOfTermHandler()
     return false;
   }
 
-  if (curSentenceType != GPS_SENTENCE_OTHER && term[0])
-    switch(COMBINE(curSentenceType, curTermNumber))
+  if (curSentenceType != SentenceType::Other && term[0])
+    switch(combine(curSentenceType, curTermNumber))
   {
-    case COMBINE(GPS_SENTENCE_RMC, 1): // Time in both sentences
-    case COMBINE(GPS_SENTENCE_GGA, 1):
+    case combine(SentenceType::RMC, 1): // Time in both sentences
+    case combine(SentenceType::GGA, 1):
       time.setTime(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 2): // RMC validity
+    case combine(SentenceType::RMC, 2): // RMC validity
       sentenceHasFix = term[0] == 'A';
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 3): // Latitude
-    case COMBINE(GPS_SENTENCE_GGA, 2):
+    case combine(SentenceType::RMC, 3): // Latitude
+    case combine(SentenceType::GGA, 2):
       location.setLatitude(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 4): // N/S
-    case COMBINE(GPS_SENTENCE_GGA, 3):
+    case combine(SentenceType::RMC, 4): // N/S
+    case combine(SentenceType::GGA, 3):
       location.staging.lat.negative = term[0] == 'S';
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 5): // Longitude
-    case COMBINE(GPS_SENTENCE_GGA, 4):
+    case combine(SentenceType::RMC, 5): // Longitude
+    case combine(SentenceType::GGA, 4):
       location.setLongitude(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 6): // E/W
-    case COMBINE(GPS_SENTENCE_GGA, 5):
+    case combine(SentenceType::RMC, 6): // E/W
+    case combine(SentenceType::GGA, 5):
       location.staging.lng.negative = term[0] == 'W';
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 7): // Speed (RMC)
+    case combine(SentenceType::RMC, 7): // Speed (RMC)
       speed.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 8): // Course (RMC)
+    case combine(SentenceType::RMC, 8): // Course (RMC)
       course.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 9): // Date (RMC)
+    case combine(SentenceType::RMC, 9): // Date (RMC)
       date.setDate(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GGA, 6): // Fix data (GGA)
+    case combine(SentenceType::GGA, 6): // Fix data (GGA)
       sentenceHasFix = term[0] > '0';
-      location.staging.fixQuality = (TinyGPSLocation::Quality)term[0];
+      location.staging.fixQuality = static_cast<TinyGPSLocation::Quality>(term[0]);
       break;
-    case COMBINE(GPS_SENTENCE_GGA, 7): // Satellites used (GGA)
+    case combine(SentenceType::GGA, 7): // Satellites used (GGA)
       satellitesUsedCount.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GGA, 8): // HDOP
+    case combine(SentenceType::GGA, 8): // HDOP
       hdop.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GGA, 9): // Altitude (GGA)
+    case combine(SentenceType::GGA, 9): // Altitude (GGA)
       altitude.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_RMC, 12):
-      location.staging.fixMode = (TinyGPSLocation::Mode)term[0];
+    case combine(SentenceType::RMC, 12):
+      location.staging.fixMode = static_cast<TinyGPSLocation::Mode>(term[0]);
       break;
-    case COMBINE(GPS_SENTENCE_GGA, 11): // Height over Geoid
+    case combine(SentenceType::GGA, 11): // Height over Geoid
       geoidHeight.set(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 1): // Mode (Auto/Manual)
+    case combine(SentenceType::GSA, 1): // Mode (Auto/Manual)
       satellites.setMode(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 2): // Fix type (1=no fix, 2=2D, 3=3D)
+    case combine(SentenceType::GSA, 2): // Fix type (1=no fix, 2=2D, 3=3D)
       satellites.setFixType(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 3):  // Satellite PRNs in fix (12 slots, terms 3..14)
-    case COMBINE(GPS_SENTENCE_GSA, 4):
-    case COMBINE(GPS_SENTENCE_GSA, 5):
-    case COMBINE(GPS_SENTENCE_GSA, 6):
-    case COMBINE(GPS_SENTENCE_GSA, 7):
-    case COMBINE(GPS_SENTENCE_GSA, 8):
-    case COMBINE(GPS_SENTENCE_GSA, 9):
-    case COMBINE(GPS_SENTENCE_GSA, 10):
-    case COMBINE(GPS_SENTENCE_GSA, 11):
-    case COMBINE(GPS_SENTENCE_GSA, 12):
-    case COMBINE(GPS_SENTENCE_GSA, 13):
-    case COMBINE(GPS_SENTENCE_GSA, 14):
+    case combine(SentenceType::GSA, 3):  // Satellite PRNs in fix (12 slots, terms 3..14)
+    case combine(SentenceType::GSA, 4):
+    case combine(SentenceType::GSA, 5):
+    case combine(SentenceType::GSA, 6):
+    case combine(SentenceType::GSA, 7):
+    case combine(SentenceType::GSA, 8):
+    case combine(SentenceType::GSA, 9):
+    case combine(SentenceType::GSA, 10):
+    case combine(SentenceType::GSA, 11):
+    case combine(SentenceType::GSA, 12):
+    case combine(SentenceType::GSA, 13):
+    case combine(SentenceType::GSA, 14):
       satellites.appendGsaSatellite(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 15): // PDOP
+    case combine(SentenceType::GSA, 15): // PDOP
       satellites.setPdop(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 16): // HDOP
+    case combine(SentenceType::GSA, 16): // HDOP
       satellites.setHdop(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 17): // VDOP
+    case combine(SentenceType::GSA, 17): // VDOP
       satellites.setVdop(termSv);
       break;
-    case COMBINE(GPS_SENTENCE_GSA, 18): // System ID (NMEA 0183 4.10)
+    case combine(SentenceType::GSA, 18): // System ID (NMEA 0183 4.10)
       satellites.setGsaSystemId(termSv);
       break;
   }
@@ -448,7 +453,7 @@ double TinyGPSPlus::distanceBetween(double lat1, double long1, double lat2, doub
   delta = sqrt(delta);
   double denom = (slat1 * slat2) + (clat1 * clat2 * cdlong);
   delta = atan2(delta, denom);
-  return delta * _GPS_EARTH_MEAN_RADIUS;
+  return delta * GPS_EARTH_MEAN_RADIUS;
 }
 
 double TinyGPSPlus::courseTo(double lat1, double long1, double lat2, double long2)

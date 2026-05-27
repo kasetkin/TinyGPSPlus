@@ -23,28 +23,29 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 
 
-#ifndef __TinyGPSPlus_h
-#define __TinyGPSPlus_h
+#pragma once
 
 #include <inttypes.h>
 // #include "Arduino.h"
 #include <limits.h>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <charconv>
 
-#define _GPS_VERSION "1.1.0" // software version of this library
-#define _GPS_MPH_PER_KNOT 1.15077945
-#define _GPS_MPS_PER_KNOT 0.51444444
-#define _GPS_KMPH_PER_KNOT 1.852
-#define _GPS_MILES_PER_METER 0.00062137112
-#define _GPS_KM_PER_METER 0.001
-#define _GPS_FEET_PER_METER 3.2808399
-#define _GPS_MAX_FIELD_SIZE 25 // was 15 in the original, need more because of PPPNAV messages: solution_status field and position_status
-#define _GPS_EARTH_MEAN_RADIUS 6371009 // old: 6372795
+inline constexpr std::string_view GPS_VERSION          = "1.1.0";
+inline constexpr double           GPS_MPH_PER_KNOT     = 1.15077945;
+inline constexpr double           GPS_MPS_PER_KNOT     = 0.51444444;
+inline constexpr double           GPS_KMPH_PER_KNOT    = 1.852;
+inline constexpr double           GPS_MILES_PER_METER  = 0.00062137112;
+inline constexpr double           GPS_KM_PER_METER     = 0.001;
+inline constexpr double           GPS_FEET_PER_METER   = 3.2808399;
+// was 15 in the original; PPPNAV messages (solution_status, position_status) need more
+inline constexpr std::size_t      GPS_MAX_FIELD_SIZE   = 25;
+inline constexpr int32_t          GPS_EARTH_MEAN_RADIUS = 6371009;  // old: 6372795
 
 struct RawDegrees
 {
@@ -57,7 +58,7 @@ public:
 };
 
 #if !defined(ARDUINO) && !defined(__AVR__)
-// Alternate implementation of millis() that relies on std
+// Alternate implementation of millis() that relies on ESP-IDF
 unsigned long millis();
 #endif
 
@@ -105,15 +106,32 @@ class TinyGPSLocation
 {
    friend class TinyGPSPlus;
 public:
-   enum Quality { Invalid = '0', GPS = '1', DGPS = '2', PPS = '3', RTK = '4', FloatRTK = '5', Estimated = '6', Manual = '7', Simulated = '8' };
-   enum Mode { N = 'N', A = 'A', D = 'D', E = 'E'};
+   enum class Quality : char
+   {
+      Invalid   = '0',
+      GPS       = '1',
+      DGPS      = '2',
+      PPS       = '3',
+      RTK       = '4',
+      FloatRTK  = '5',
+      Estimated = '6',
+      Manual    = '7',
+      Simulated = '8',
+   };
+   enum class Mode : char
+   {
+      N = 'N',
+      A = 'A',
+      D = 'D',
+      E = 'E',
+   };
 
    struct Data
    {
       RawDegrees lat{};
       RawDegrees lng{};
-      Quality    fixQuality = Invalid;
-      Mode       fixMode    = N;
+      Quality    fixQuality = Quality::Invalid;
+      Mode       fixMode    = Mode::N;
 
       double latDeg() const;
       double lngDeg() const;
@@ -362,17 +380,17 @@ public:
 
       double mph() const
       {
-         return _GPS_MPH_PER_KNOT * raw / 100.0;
+         return GPS_MPH_PER_KNOT * raw / 100.0;
       }
 
       double mps() const
       {
-         return _GPS_MPS_PER_KNOT * raw / 100.0;
+         return GPS_MPS_PER_KNOT * raw / 100.0;
       }
 
       double kmph() const
       {
-         return _GPS_KMPH_PER_KNOT * raw / 100.0;
+         return GPS_KMPH_PER_KNOT * raw / 100.0;
       }
    };
 
@@ -421,17 +439,17 @@ public:
 
       double miles() const
       {
-         return _GPS_MILES_PER_METER * raw / 100.0;
+         return GPS_MILES_PER_METER * raw / 100.0;
       }
 
       double kilometers() const
       {
-         return _GPS_KM_PER_METER * raw / 100.0;
+         return GPS_KM_PER_METER * raw / 100.0;
       }
 
       double feet() const
       {
-         return _GPS_FEET_PER_METER * raw / 100.0;
+         return GPS_FEET_PER_METER * raw / 100.0;
       }
    };
 
@@ -575,8 +593,8 @@ private:
    void commit();
    void set(std::string_view term);
 
-   std::array<char, _GPS_MAX_FIELD_SIZE + 1> stagingBuffer{};
-   std::array<char, _GPS_MAX_FIELD_SIZE + 1> buffer{};
+   std::array<char, GPS_MAX_FIELD_SIZE + 1> stagingBuffer{};
+   std::array<char, GPS_MAX_FIELD_SIZE + 1> buffer{};
    unsigned long lastCommitTime;
    bool valid, updated;
    std::string_view sentenceName;
@@ -603,7 +621,7 @@ public:
   TinyGPSHDOP hdop;
   TinyGPSAltitude geoidHeight;
 
-  static std::string_view libraryVersion() { return _GPS_VERSION; }
+  static std::string_view libraryVersion() { return GPS_VERSION; }
 
   static double distanceBetween(double lat1, double long1, double lat2, double long2);
   static double courseTo(double lat1, double long1, double lat2, double long2);
@@ -619,16 +637,21 @@ public:
   uint32_t failedChecksum()   const { return failedChecksumCount; }
   uint32_t passedChecksum()   const { return passedChecksumCount; }
 
-  uint8_t  sentenceType()      const { return curSentenceType; }
+  enum class SentenceType : uint8_t
+  {
+     GGA,
+     RMC,
+     GSA,
+     Other,
+  };
+  SentenceType sentenceType()  const { return curSentenceType; }
 
 private:
-  enum {GPS_SENTENCE_GGA, GPS_SENTENCE_RMC, GPS_SENTENCE_GSA, GPS_SENTENCE_OTHER};
-
   // parsing state variables
   uint8_t parity;
   bool isChecksumTerm;
-  std::array<char, _GPS_MAX_FIELD_SIZE> term{};
-  uint8_t curSentenceType;
+  std::array<char, GPS_MAX_FIELD_SIZE> term{};
+  SentenceType curSentenceType;
   uint8_t curTermNumber;
   uint8_t curTermOffset;
   bool sentenceHasFix;
@@ -654,6 +677,9 @@ private:
   bool endOfTermHandler();
 
   static double sq(double x);
-};
 
-#endif // def(__TinyGPSPlus_h)
+  /// Pack (sentence type, term number) into a single integral key so that the
+  /// per-term dispatch in endOfTermHandler can be a flat switch. Evaluated at
+  /// compile time for case labels and at runtime for the switch expression.
+  static constexpr unsigned combine(SentenceType sentenceType, unsigned termNumber) noexcept;
+};
