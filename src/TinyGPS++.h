@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // #include "Arduino.h"
 #include <limits.h>
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -90,18 +91,17 @@ enum class GsaFixType : uint8_t
    Fix3D = 3,
 };
 
-/// One satellite, identified by (systemId, prn). GSA sets inSolution; GSV sets
-/// inView plus elevation/azimuth/C/N0. The std::optionals stay empty until a GSV
-/// reports them, so "never observed" is a distinct type-level state.
+/// One satellite, identified by (systemId, prn). Elevation/azimuth/C/N0 come from
+/// GSV and are -1 until reported. The in-solution / in-view flags live in parallel
+/// std::bitsets on the owning Data (one bit each), not on this record.
+/// Members are ordered largest-first so the record packs to 8 bytes with no padding.
 struct TinyGPSSatellite
 {
-   uint8_t                prn          = 0;
-   GnssSystemId           systemId     = GnssSystemId::Unknown;
-   std::optional<int16_t> elevationDeg;  // from GSV
-   std::optional<int16_t> azimuthDeg;    // from GSV
-   std::optional<int16_t> cn0DbHz;       // from GSV (strongest across signals)
-   bool                   inSolution   = false;  // set by GSA (used in the fix)
-   bool                   inView       = false;  // set by GSV (visible)
+   int16_t      elevationDeg = -1;  // degrees, -1 = not reported (from GSV)
+   int16_t      azimuthDeg   = -1;  // degrees, -1 = not reported (from GSV)
+   int16_t      cn0DbHz      = -1;  // dB-Hz,   -1 = not reported (strongest across signals)
+   uint8_t      prn          = 0;
+   GnssSystemId systemId     = GnssSystemId::Unknown;
 };
 
 class TinyGPSLocation
@@ -517,25 +517,25 @@ public:
       int32_t    hdop    = 0;
       int32_t    vdop    = 0;
 
-      /// Satellites used in the fix (GSA), enriched with GSV elevation/azimuth/C/N0.
-      std::array<TinyGPSSatellite, MaxSatellitesTracked> inSolution{};
-      std::size_t inSolutionCount = 0;
+      /// All satellites seen this epoch (GSA + GSV, deduped by (systemId, prn)).
+      /// The parallel bitsets flag which are used in the fix / in view: bit i
+      /// corresponds to sats[i]. Only [0, count) are valid.
+      std::array<TinyGPSSatellite, MaxSatellitesTracked> sats{};
+      std::bitset<MaxSatellitesTracked> inSolutionFlags;
+      std::bitset<MaxSatellitesTracked> inViewFlags;
+      std::size_t count = 0;
 
-      /// Satellites in view (GSV), each with elevation/azimuth/C/N0 and an inSolution flag.
-      std::array<TinyGPSSatellite, MaxSatellitesTracked> inViewArr{};
-      std::size_t inViewCount = 0;
-
-      /// Trimmed in-solution view; valid for this Data's lifetime.
-      std::span<const TinyGPSSatellite> satellites() const
+      /// All tracked satellites this epoch; index into it with inSolution()/inView().
+      std::span<const TinyGPSSatellite> all() const
       {
-         return std::span<const TinyGPSSatellite>(inSolution.data(), inSolutionCount);
+         return std::span<const TinyGPSSatellite>(sats.data(), count);
       }
 
-      /// Trimmed in-view view; valid for this Data's lifetime.
-      std::span<const TinyGPSSatellite> inView() const
-      {
-         return std::span<const TinyGPSSatellite>(inViewArr.data(), inViewCount);
-      }
+      bool inSolution(std::size_t i) const { return inSolutionFlags.test(i); }
+      bool inView(std::size_t i)     const { return inViewFlags.test(i); }
+
+      std::size_t inSolutionCount() const { return inSolutionFlags.count(); }
+      std::size_t inViewCount()     const { return inViewFlags.count(); }
    };
 
    /// Fresh only when BOTH GSA and GSV have committed since the last consume()
@@ -572,8 +572,11 @@ private:
       int32_t    vdop    = 0;
    };
 
-   // ── one buffer, keyed by (systemId, prn); cleared each epoch on RMC ─────────
+   // ── one set of satellites, keyed by (systemId, prn); cleared each epoch on RMC.
+   //    Parallel bitsets carry the per-satellite flags (bit i -> buffer[i]). ─────
    std::array<TinyGPSSatellite, MaxSatellitesTracked> buffer{};
+   std::bitset<MaxSatellitesTracked> inSolutionFlags;
+   std::bitset<MaxSatellitesTracked> inViewFlags;
    std::size_t bufferCount = 0;
 
    Scalars committedScalars;
@@ -597,9 +600,9 @@ private:
    int gsvMaxFieldIdx = -1;
    GnssSystemId gsvStagingSystemId = GnssSystemId::Unknown;
 
-   /// Find the buffer entry for (systemId, prn), or append a fresh one. Returns
-   /// nullptr only if the buffer is full and the satellite is not already present.
-   TinyGPSSatellite* upsert(GnssSystemId systemId, uint8_t prn);
+   /// Index of the (systemId, prn) entry, appending a fresh one if absent. Returns
+   /// MaxSatellitesTracked (an invalid index) when full and not already present.
+   std::size_t upsert(GnssSystemId systemId, uint8_t prn);
 
    void beginEpoch();   // clear the buffer + freshness (called on RMC)
 

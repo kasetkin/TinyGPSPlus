@@ -644,18 +644,18 @@ void TinyGPSPlus::insertCustom(TinyGPSCustom *pElt, std::string_view sentenceNam
 // TinyGPSSatellites — one buffer keyed by (systemId, prn), cleared each epoch
 //
 
-TinyGPSSatellite* TinyGPSSatellites::upsert(GnssSystemId systemId, uint8_t prn)
+std::size_t TinyGPSSatellites::upsert(GnssSystemId systemId, uint8_t prn)
 {
    for (std::size_t i = 0; i < bufferCount; ++i)
       if (buffer[i].prn == prn && buffer[i].systemId == systemId)
-         return &buffer[i];
+         return i;
    if (bufferCount >= buffer.size())
-      return nullptr;
-   TinyGPSSatellite& slot = buffer[bufferCount++];
-   slot = TinyGPSSatellite{};
-   slot.prn = prn;
-   slot.systemId = systemId;
-   return &slot;
+      return MaxSatellitesTracked;   // full — caller drops this satellite
+   const std::size_t idx = bufferCount++;
+   buffer[idx] = TinyGPSSatellite{};
+   buffer[idx].prn = prn;
+   buffer[idx].systemId = systemId;
+   return idx;
 }
 
 // A new epoch begins at the RMC sentence (which leads the UM980 cycle), so clearing
@@ -664,6 +664,8 @@ TinyGPSSatellite* TinyGPSSatellites::upsert(GnssSystemId systemId, uint8_t prn)
 void TinyGPSSatellites::beginEpoch()
 {
    bufferCount = 0;
+   inSolutionFlags.reset();
+   inViewFlags.reset();
    gsaFresh = false;
    gsvFresh = false;
 }
@@ -742,8 +744,11 @@ void TinyGPSSatellites::commitGsa()
    // Upsert each PRN used in the fix. A >12-sat solution split across two GSA
    // sentences just upserts its disjoint PRNs into the same buffer.
    for (std::size_t i = 0; i < stagingPrnCount; ++i)
-      if (TinyGPSSatellite* sat = upsert(systemId, stagingPrns[i]))
-         sat->inSolution = true;
+   {
+      const std::size_t idx = upsert(systemId, stagingPrns[i]);
+      if (idx < MaxSatellitesTracked)
+         inSolutionFlags.set(idx);
+   }
 }
 
 //
@@ -803,17 +808,18 @@ void TinyGPSSatellites::commitGsv()
       const int16_t prn = gsvFieldVal[base];
       if (prn <= 0 || prn > 255)
          continue;
-      TinyGPSSatellite* sat = upsert(systemId, static_cast<uint8_t>(prn));
-      if (!sat)
+      const std::size_t idx = upsert(systemId, static_cast<uint8_t>(prn));
+      if (idx >= MaxSatellitesTracked)
          continue;
-      sat->inView = true;
-      if (gsvFieldHas[base + 1]) sat->elevationDeg = gsvFieldVal[base + 1];
-      if (gsvFieldHas[base + 2]) sat->azimuthDeg   = gsvFieldVal[base + 2];
+      inViewFlags.set(idx);
+      TinyGPSSatellite& sat = buffer[idx];
+      if (gsvFieldHas[base + 1]) sat.elevationDeg = gsvFieldVal[base + 1];
+      if (gsvFieldHas[base + 2]) sat.azimuthDeg   = gsvFieldVal[base + 2];
       if (gsvFieldHas[base + 3])
       {
          const int16_t cn0 = gsvFieldVal[base + 3];
-         if (!sat->cn0DbHz.has_value() || cn0 > *sat->cn0DbHz)
-            sat->cn0DbHz = cn0;
+         if (cn0 > sat.cn0DbHz)   // cn0DbHz starts at -1, so any real value wins
+            sat.cn0DbHz = cn0;
       }
    }
 
@@ -833,16 +839,11 @@ std::optional<TinyGPSSatellites::Data> TinyGPSSatellites::consume()
    out.hdop    = committedScalars.hdop;
    out.vdop    = committedScalars.vdop;
 
-   // Split the one buffer into the two views; an entry that is both lands in both,
-   // carrying its GSV elevation/azimuth/C/N0 (the in-solution enrichment).
-   for (std::size_t i = 0; i < bufferCount; ++i)
-   {
-      const TinyGPSSatellite& sat = buffer[i];
-      if (sat.inSolution && out.inSolutionCount < out.inSolution.size())
-         out.inSolution[out.inSolutionCount++] = sat;
-      if (sat.inView && out.inViewCount < out.inViewArr.size())
-         out.inViewArr[out.inViewCount++] = sat;
-   }
+   // One snapshot of the satellite set + its parallel flag bitsets — no duplication.
+   std::copy_n(buffer.begin(), bufferCount, out.sats.begin());
+   out.count = bufferCount;
+   out.inSolutionFlags = inSolutionFlags;
+   out.inViewFlags = inViewFlags;
 
    gsaFresh = false;
    gsvFresh = false;
