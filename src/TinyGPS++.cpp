@@ -40,7 +40,7 @@ static constexpr std::string_view GGA_TERM{"GGA"};
 static constexpr std::string_view GSA_TERM{"GSA"};
 static constexpr std::string_view GSV_TERM{"GSV"};
 
-static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABLQ"}; // GP, GN, GA, GB, GL, GQ
+static constexpr std::string_view GNSS_TALKER_SUFFIXES{"PNABLQI"}; // GP, GN, GA, GB, GL, GQ, GI
 
 /// Map the second character of an NMEA talker ID (the suffix after 'G') to the
 /// GNSS constellation it identifies. Used when a GSA sentence omits the
@@ -55,6 +55,7 @@ static constexpr GnssSystemId suffixToSystemId(char suffix) noexcept
       case 'A': return GnssSystemId::Galileo;
       case 'B': return GnssSystemId::BeiDou;   // GB
       case 'Q': return GnssSystemId::QZSS;
+      case 'I': return GnssSystemId::NavIC;    // GI — IRNSS / NavIC
       case 'N': return GnssSystemId::Unknown;  // GN — combined, rely on field 18
       default:  return GnssSystemId::Unknown;
    }
@@ -249,6 +250,12 @@ bool TinyGPSPlus::endOfTermHandler()
       passedChecksumCount++;
       if (sentenceHasFix)
         ++sentencesWithFixCount;
+
+      // Any committed non-GSA sentence ends an open GSA run, so the next epoch's
+      // GSA for a system replaces while a within-epoch split (consecutive
+      // same-System-ID GSA sentences) accumulates.
+      if (curSentenceType != SentenceType::GSA)
+        satellites.endGsaRun();
 
       switch(curSentenceType)
       {
@@ -687,7 +694,7 @@ void TinyGPSSatellites::setGsaSystemId(std::string_view term)
    uint8_t v = 0;
    if (std::from_chars(term.data(), term.data() + term.size(), v).ec == std::errc{}
        && v >= static_cast<uint8_t>(GnssSystemId::GPS)
-       && v <= static_cast<uint8_t>(GnssSystemId::QZSS))
+       && v <= static_cast<uint8_t>(GnssSystemId::NavIC))
    {
       stagingSystemId = static_cast<GnssSystemId>(v);
    }
@@ -696,7 +703,7 @@ void TinyGPSSatellites::setGsaSystemId(std::string_view term)
 
 void TinyGPSSatellites::appendGsaSatellite(std::string_view term)
 {
-   if (term.empty() || stagingCount >= MaxPerSystem)
+   if (term.empty() || stagingCount >= MaxGsaSatsPerSentence)
       return;
    uint8_t prn = 0;
    if (std::from_chars(term.data(), term.data() + term.size(), prn).ec != std::errc{})
@@ -735,27 +742,26 @@ void TinyGPSSatellites::commitGsa()
    if (sysIdx < NumKnownSystems)
    {
       PerSystem& slot = committedBySystem[sysIdx];
-      slot.count = stagingCount;
-      for (std::size_t i = 0; i < stagingCount; ++i)
-         slot.sats[i] = stagingList[i];
+      // Consecutive same-System-ID GSA sentences (a >12-sat solution split across
+      // two sentences) append; otherwise this is the system's first GSA this epoch.
+      if (committedSystemId != gsaRunSystemId)
+         slot.count = 0;
+      for (std::size_t i = 0; i < stagingCount && slot.count < slot.sats.size(); ++i)
+         slot.sats[slot.count++] = stagingList[i];
       slot.lastCommitTime = millis();
       slot.valid = true;
    }
 
-   rebuildFlatList();
+   gsaRunSystemId = committedSystemId;
    lastCommitTime = millis();
 }
 
-void TinyGPSSatellites::rebuildFlatList()
+// End the open GSA run: called for every committed non-GSA sentence so that a
+// constellation's GSA in the next epoch replaces rather than appends, while two
+// consecutive same-System-ID GSA sentences within one epoch accumulate.
+void TinyGPSSatellites::endGsaRun()
 {
-   flatCount = 0;
-   for (const PerSystem& slot : committedBySystem)
-   {
-      if (!slot.valid)
-         continue;
-      for (std::size_t i = 0; i < slot.count && flatCount < flatList.size(); ++i)
-         flatList[flatCount++] = slot.sats[i];
-   }
+   gsaRunSystemId = GnssSystemId::Unknown;
 }
 
 //
@@ -924,8 +930,15 @@ std::optional<TinyGPSSatellites::Data> TinyGPSSatellites::consume()
       out.hdop = committed->hdop;
       out.vdop = committed->vdop;
    }
-   std::copy_n(flatList.begin(), flatCount, out.inSolution.begin());
-   out.inSolutionCount = flatCount;
+   // In-solution list: flatten the per-system committed GSA lists on demand.
+   out.inSolutionCount = 0;
+   for (const PerSystem& slot : committedBySystem)
+   {
+      if (!slot.valid)
+         continue;
+      for (std::size_t i = 0; i < slot.count && out.inSolutionCount < out.inSolution.size(); ++i)
+         out.inSolution[out.inSolutionCount++] = slot.sats[i];
+   }
 
    // GSV-derived in-view list: flatten the per-system committed lists on demand.
    out.inViewCount = 0;

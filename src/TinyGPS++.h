@@ -72,6 +72,7 @@ enum class GnssSystemId : uint8_t
    Galileo = 3,
    BeiDou  = 4,
    QZSS    = 5,
+   NavIC   = 6,   // IRNSS; talker "GI"
 };
 
 /// GSA field 1: Mode (Auto / Manual switch between 2D and 3D).
@@ -499,8 +500,9 @@ class TinyGPSSatellites
 {
    friend class TinyGPSPlus;
 public:
-   static constexpr std::size_t MaxPerSystem = 12;          // satellite slots per GSA
-   static constexpr std::size_t NumKnownSystems = 5;        // GPS..QZSS in GnssSystemId
+   static constexpr std::size_t MaxGsaSatsPerSentence = 12; // PRN slots in one $--GSA sentence
+   static constexpr std::size_t MaxPerSystem = 24;          // accumulated in-solution per system (up to two GSA sentences)
+   static constexpr std::size_t NumKnownSystems = 6;        // GPS..NavIC in GnssSystemId
    static constexpr std::size_t MaxTotalSatellites = NumKnownSystems * MaxPerSystem;
    static constexpr std::size_t MaxInViewPerSystem = 20;    // satellite slots per GSV constellation
    static constexpr std::size_t MaxTotalInView = NumKnownSystems * MaxInViewPerSystem;
@@ -589,14 +591,16 @@ private:
    Scalars staging;
    std::optional<Scalars> committed;
 
-   std::array<TinyGPSSatellite, MaxPerSystem> stagingList{};
+   std::array<TinyGPSSatellite, MaxGsaSatsPerSentence> stagingList{};
    std::size_t stagingCount = 0;
    GnssSystemId stagingSystemId = GnssSystemId::Unknown;
 
    std::array<PerSystem, NumKnownSystems> committedBySystem{};
 
-   std::array<TinyGPSSatellite, MaxTotalSatellites> flatList{};
-   std::size_t flatCount = 0;
+   // System whose GSA run is currently open for continuation: consecutive
+   // same-System-ID GSA sentences (a >12-sat solution split across two sentences)
+   // append; any committed non-GSA sentence ends the run so the next epoch replaces.
+   GnssSystemId gsaRunSystemId = GnssSystemId::Unknown;
 
    // ── GSV (satellites in view) ────────────────────────────────────────────
    struct PerSystemInView
@@ -638,7 +642,7 @@ private:
    void setGsaSystemId(std::string_view term);
    void appendGsaSatellite(std::string_view term);
    void commitGsa();
-   void rebuildFlatList();
+   void endGsaRun();
 
    void beginGsvSentence(GnssSystemId derivedFromTalker);
    void setGsvTotalMessages(std::string_view term);
